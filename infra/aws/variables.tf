@@ -45,3 +45,9 @@ variable "rate_limit_per_5min" {
   type        = number
   default     = 300
 }
+
+variable "audit_user_headers" {
+  description = "Comma-separated request headers carrying the signed-in user from your SSO layer, checked in order. ALB/Cognito OIDC sets x-amzn-oidc-data (a JWT with email) and x-amzn-oidc-identity; oauth2-proxy sets x-forwarded-email."
+  type        = string
+  default     = "x-amzn-oidc-data,x-amzn-oidc-identity,x-forwarded-email,x-auth-request-email,x-forwarded-user"
+}

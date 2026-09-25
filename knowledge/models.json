@@ -1,0 +1,164 @@
+{
+  "reviewed_on": "2026-09-25",
+  "review_every_days": 60,
+  "note": "One source of truth for models and list prices (USD per 1M tokens, standard tier). Update from each provider's official pricing page, set verified_on and source, and run the live check (/api/catalog/check) to catch retired or new model IDs.",
+  "models": [
+    {
+      "provider": "anthropic",
+      "id": "claude-fable-5-1",
+      "label": "Claude Fable 5.1",
+      "tier": "frontier",
+      "in": 10.0,
+      "out": 50.0,
+      "status": "verified",
+      "verified_on": "2026-09-25",
+      "source": "https://platform.claude.com/docs/en/about-claude/pricing"
+    },
+    {
+      "provider": "anthropic",
+      "id": "claude-opus-5-5",
+      "label": "Claude Opus 5.5",
+      "tier": "large",
+      "in": 4.0,
+      "out": 20.0,
+      "status": "verified",
+      "verified_on": "2026-09-25",
+      "source": "https://platform.claude.com/docs/en/about-claude/pricing"
+    },
+    {
+      "provider": "anthropic",
+      "id": "claude-sonnet-5",
+      "label": "Claude Sonnet 5",
+      "tier": "medium",
+      "in": 2.0,
+      "out": 10.0,
+      "status": "verified",
+      "verified_on": "2026-09-25",
+      "source": "https://platform.claude.com/docs/en/about-claude/pricing"
+    },
+    {
+      "provider": "anthropic",
+      "id": "claude-haiku-4-5",
+      "label": "Claude Haiku 4.5",
+      "tier": "small",
+      "in": 1.0,
+      "out": 5.0,
+      "status": "verified",
+      "verified_on": "2026-09-25",
+      "source": "https://platform.claude.com/docs/en/about-claude/pricing"
+    },
+    {
+      "provider": "openai",
+      "id": "gpt-5",
+      "label": "GPT-5",
+      "tier": "large",
+      "in": 1.25,
+      "out": 10.0,
+      "status": "needs_review",
+      "verified_on": null,
+      "source": "https://openai.com/api/pricing",
+      "review_note": "Earlier-generation model; trackers list GPT-6 and GPT-5.6 as current (see watchlist)."
+    },
+    {
+      "provider": "openai",
+      "id": "gpt-5-mini",
+      "label": "GPT-5 mini",
+      "tier": "small",
+      "in": 0.25,
+      "out": 2.0,
+      "status": "needs_review",
+      "verified_on": null,
+      "source": "https://openai.com/api/pricing"
+    },
+    {
+      "provider": "xai",
+      "id": "grok-4",
+      "label": "Grok 4",
+      "tier": "large",
+      "in": 3.0,
+      "out": 15.0,
+      "status": "needs_review",
+      "verified_on": null,
+      "source": "https://docs.x.ai/developers/pricing",
+      "review_note": "Trackers list Grok 4.7 as the current flagship (see watchlist)."
+    },
+    {
+      "provider": "xai",
+      "id": "grok-4-fast",
+      "label": "Grok 4 Fast",
+      "tier": "small",
+      "in": 0.2,
+      "out": 0.5,
+      "status": "needs_review",
+      "verified_on": null,
+      "source": "https://docs.x.ai/developers/pricing"
+    },
+    {
+      "provider": "google",
+      "id": "gemini-2.5-pro",
+      "label": "Gemini 2.5 Pro",
+      "tier": "large",
+      "in": 1.25,
+      "out": 10.0,
+      "status": "needs_review",
+      "verified_on": null,
+      "source": "https://ai.google.dev/gemini-api/docs/pricing",
+      "review_note": "Trackers list the Gemini 3.x family as current (see watchlist)."
+    },
+    {
+      "provider": "google",
+      "id": "gemini-2.5-flash",
+      "label": "Gemini 2.5 Flash",
+      "tier": "small",
+      "in": 0.3,
+      "out": 2.5,
+      "status": "needs_review",
+      "verified_on": null,
+      "source": "https://ai.google.dev/gemini-api/docs/pricing"
+    }
+  ],
+  "watchlist": [
+    {
+      "provider": "openai",
+      "name": "GPT-6 Astra",
+      "reported_price": "$10 / $50",
+      "seen_on": "2026-09-25",
+      "source": "https://www.cloudzero.com/blog/openai-pricing/"
+    },
+    {
+      "provider": "openai",
+      "name": "GPT-5.6 Sol · Terra · Luna",
+      "reported_price": "$4/$20 (promo) · $2/$12 · $0.20/$1.20",
+      "seen_on": "2026-09-25",
+      "source": "https://www.cloudzero.com/blog/openai-pricing/"
+    },
+    {
+      "provider": "google",
+      "name": "Gemini 3.1 Pro",
+      "reported_price": "$2 / $12 (≤200K context)",
+      "seen_on": "2026-09-25",
+      "source": "https://www.cloudzero.com/blog/gemini-pricing/"
+    },
+    {
+      "provider": "google",
+      "name": "Gemini 3.8 Flash",
+      "reported_price": "$0.75 / $3.75 (introductory)",
+      "seen_on": "2026-09-25",
+      "source": "https://www.cloudzero.com/blog/gemini-pricing/"
+    },
+    {
+      "provider": "xai",
+      "name": "Grok 4.7",
+      "reported_price": "$2 / $6",
+      "seen_on": "2026-09-25",
+      "source": "https://mem0.ai/blog/xai-grok-api-pricing"
+    },
+    {
+      "provider": "xai",
+      "name": "Grok 4.1 Fast",
+      "reported_price": "$0.20 / $0.50",
+      "seen_on": "2026-09-25",
+      "source": "https://mem0.ai/blog/xai-grok-api-pricing"
+    }
+  ]
+}

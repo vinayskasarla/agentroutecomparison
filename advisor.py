@@ -3,6 +3,7 @@
 Pure logic lives here (no I/O besides the optional Claude call), so it can be tested on its own.
 app.py runs the model evaluations and hands the per-test-case results to `rank_designs`.
 """
+import datetime
 import json
 import os
 import re
@@ -19,63 +20,9 @@ TASK_TYPES = ["classification", "extraction", "grounded_qa", "open_qa", "summari
 LATENCY_BUDGET_MS = {"realtime": 1500, "interactive": 5000, "background": 24 * 3600 * 1000}
 
 # ------------------------------------------------------------------ architecture catalog
-# complexity: 1 (trivial to build and run) … 5 (many moving parts)
-ARCHITECTURES = {
-    "single_call": {
-        "name": "Single model call", "complexity": 1,
-        "flow": ["App", "AI Gateway", "LLM"],
-        "what": "One well-prompted call to one model, with structured output.",
-        "pick_if": "you want the simplest thing that meets the bar, and one model is accurate enough on its own.",
-    },
-    "cascade": {
-        "name": "Small model first, escalate when unsure", "complexity": 2,
-        "flow": ["App", "AI Gateway", "Small LLM", "Large LLM if unsure"],
-        "what": "A cheap, fast model answers; only low-confidence answers are re-asked of a stronger model.",
-        "pick_if": "most requests are easy and cost or speed matter, but you still need the big model for hard cases.",
-    },
-    "decision_model": {
-        "name": "Decision model with LLM fallback", "complexity": 2,
-        "flow": ["App", "AI Gateway", "Jev", "LLM if unsure"],
-        "what": "Jev returns a typed decision with calibrated probabilities; unsure requests go to an LLM.",
-        "pick_if": "the answer is one of a fixed set of labels and you need very low latency and cost at high volume.",
-    },
-    "rag": {
-        "name": "Retrieval-augmented generation (RAG)", "complexity": 3,
-        "flow": ["App", "Search your documents", "AI Gateway", "LLM"],
-        "what": "Look up the relevant passages first, then have the model answer only from them, or say it doesn't know.",
-        "pick_if": "answers must come from your own documents and must not be made up.",
-    },
-    "long_context": {
-        "name": "Whole documents in the prompt (long context)", "complexity": 1,
-        "flow": ["App", "AI Gateway", "LLM with your documents in the prompt"],
-        "what": "Send the relevant documents with every request and have the model answer only from them. No search index to build.",
-        "pick_if": "your documents are small (up to roughly 100 pages) and rarely change, and you want the simplest grounded setup.",
-    },
-    "workflow": {
-        "name": "Fixed workflow (prompt chain)", "complexity": 3,
-        "flow": ["App", "Agent Runtime", "Step 1: small LLM", "Step 2: large LLM", "Checks"],
-        "what": "A predictable sequence of steps in code: e.g. classify the request, then run a fixed, tested handler (look up, act, draft, check), each step a focused model call.",
-        "pick_if": "the job has several steps that always happen in the same order and you want control and testability.",
-    },
-    "tool_agent": {
-        "name": "Tool-using agent", "complexity": 4,
-        "flow": ["App", "Agent Runtime", "LLM ⇄ your tools/APIs", "Human approval for risky actions"],
-        "what": "The model decides which of your tools to call, in a loop, until the task is done.",
-        "pick_if": "the agent must take actions or look things up in systems, and the steps vary per request.",
-    },
-    "multi_agent": {
-        "name": "Orchestrator with specialist agents", "complexity": 5,
-        "flow": ["App", "Agent Runtime", "Orchestrator LLM", "3 worker agents in parallel", "Synthesis"],
-        "what": "A lead model breaks the task into parts, parallel workers research them, and the lead combines the results.",
-        "pick_if": "tasks are open-ended and broad (research, investigations) and quality matters more than cost.",
-    },
-    "batch": {
-        "name": "Batch pipeline", "complexity": 2,
-        "flow": ["Queue", "Batch API", "LLM", "Results store"],
-        "what": "Requests are collected and processed asynchronously through the providers' batch APIs at about half price.",
-        "pick_if": "nobody is waiting for the answer (nightly jobs, backfills) and cost matters most.",
-    },
-}
+# Patterns, their best-practice sources and review date live in knowledge/patterns.json.
+PATTERN_KNOWLEDGE = json.load(open(os.path.join(catalog.KNOWLEDGE_DIR, "patterns.json")))
+ARCHITECTURES = PATTERN_KNOWLEDGE["patterns"]
 
 # ------------------------------------------------------------------ sample test cases
 POLICY = ("Acme Returns Policy\n- Unused items can be returned within 30 days of delivery for a full refund.\n"
@@ -389,6 +336,8 @@ def compose(arch, models, res, jev, spec):
     if arch == "workflow":
         small = _direct_rows(res, models["small"])
         return [{**g, "cost": g["cost"] + s["cost"], "ms": g["ms"] + s["ms"] + 40} for g, s in zip(base, small)], "estimated"
+    if arch == "evaluator_optimizer":  # draft + review + one revision with the same model
+        return [{**g, "cost": g["cost"] * 2.6, "ms": g["ms"] * 2.5} for g in base], "estimated"
     if arch == "tool_agent":  # ~3 model turns with growing context, 2 tool calls of ~300 ms
         return [{**g, "cost": g["cost"] * 3.6, "ms": g["ms"] * 3 + 600} for g in base], "estimated"
     if arch == "multi_agent":  # lead plans + synthesizes, 3 workers in parallel on the small model
@@ -411,6 +360,8 @@ def applicable(spec):
         "rag": (docs, "answers don't need to come from your own documents"),
         "workflow": (multi or tools or t in ("summarization", "generation"), "the task is a single step"),
         "tool_agent": (tools, "the agent doesn't need to call your systems or take actions"),
+        "evaluator_optimizer": (t in ("generation", "summarization", "research") and not tools,
+                                "answers are short and checkable, so a review loop adds cost without adding quality"),
         "multi_agent": (t == "research" or (multi and spec["latency"] != "realtime"), "the task isn't open-ended research"),
         "long_context": (docs and spec["document_size"] == "small", "your documents are too large to send with every request"
                          if docs else "answers don't need to come from your own documents"),
@@ -435,6 +386,9 @@ def pick_models(res, spec, provider_of):
     target = spec["accuracy_target"]
     good = [m for m, a in rows.items() if a["accuracy"] is not None and a["accuracy"] >= target
             and a["halluc"] <= spec["max_hallucination"]]
+    verified = {m["id"] for m in catalog.MODELS if m.get("status") == "verified"}
+    # A source of truth shouldn't lean on unconfirmed prices: prefer verified models when any qualifies.
+    good = [m for m in good if m in verified] or good
     by_cost = lambda m: rows[m]["cost_per_req"]  # noqa: E731
     by_quality = lambda m: (-(rows[m]["accuracy"] or 0), rows[m]["halluc"] or 0, rows[m]["cost_per_req"])  # noqa: E731
     primary = min(good, key=by_cost) if good else min(rows, key=by_quality)
@@ -444,7 +398,8 @@ def pick_models(res, spec, provider_of):
     large_pool = [m for m in rows if catalog.MODEL_BY_ID[m]["tier"] != "small"]
     best_large = min(large_pool, key=by_quality) if large_pool else None
     others = [m for m in rows if provider_of(m) != provider_of(primary)]
-    fb_good = [m for m in others if m in good]
+    fb_good = [m for m in others if m in good] or [m for m in others if m in verified and rows[m]["accuracy"] is not None
+                                                   and rows[m]["accuracy"] >= target]
     fallback = (min(fb_good, key=by_cost) if fb_good else min(others, key=by_quality)) if others else None
     return {"primary": primary, "best": best, "best_large": best_large, "small": small, "fallback": fallback, "table": rows, "qualifying": good}
 
@@ -479,7 +434,9 @@ def rank_designs(spec, res, jev):
             per_req = m["cost_per_req"] * (1 - repeat if cache else 1) + infra
             p95 = m["p95_ms"] + sum(a["ms"] for a in addons)
             d = {
-                "arch": arch, **ARCHITECTURES[arch], "variant": variant, "models": models, "evidence": evidence, "addons": addons,
+                "arch": arch, **ARCHITECTURES[arch],
+                "sources": [PATTERN_KNOWLEDGE["sources"][k] for k in ARCHITECTURES[arch].get("sources", [])],
+                "variant": variant, "models": models, "evidence": evidence, "addons": addons,
                 "accuracy": m["accuracy"], "right": m["right"], "n": m["n"], "halluc": m["halluc"],
                 "p50_ms": m["p50_ms"], "p95_ms": p95, "cost_per_req": per_req, "monthly": per_req * rpd * 30,
                 "escalation_rate": (sum(1 for r in rows if r.get("escalated")) / len(rows)) if rows and arch in ("cascade", "decision_model") else None,
@@ -602,6 +559,7 @@ def explain(top, spec, picks):
         "tool_agent": "The agent has to act in your systems, and which tools it needs varies per request.",
         "multi_agent": "The task is broad and open-ended; parallel specialists cover more ground than one model.",
         "batch": "Nobody is waiting for the result, so batch pricing halves the model cost.",
+        "evaluator_optimizer": "Written quality matters here, and a second review pass catches issues a single draft misses.",
     }[first["arch"]]
     reasons.append(arch_why)
     reasons.append(f"{label(first['models']['primary'])} is the cheapest tested model that reached your accuracy target."
@@ -642,3 +600,41 @@ def explain(top, spec, picks):
         if not d["passes"]:
             t.append("misses " + ", ".join(c["label"].lower() for c in d["checks"] if not c["pass"]))
         d["tradeoffs"] = t
+
+
+# ------------------------------------------------------------------ trust helpers
+def cross_check(spec: dict, goal: str) -> list:
+    """Compare the Claude architect's reading of the goal with the keyword rules. Disagreements are shown
+    for the user to confirm, so a misread goal can't silently drive the recommendation."""
+    rules = finalize_spec(spec_from_rules(goal))
+    names = {"task_type": "Task type", "needs_documents": "Answers from your documents", "needs_tools": "Takes actions",
+             "latency": "Who is waiting", "handles_personal_data": "Personal data"}
+    out = []
+    for key, label in names.items():
+        if spec.get(key) != rules.get(key) and not (key == "task_type" and rules[key] == "open_qa"):
+            out.append({"field": key, "label": label, "architect": spec.get(key), "rules": rules.get(key)})
+    if rules.get("labels") and not spec.get("labels"):
+        out.append({"field": "labels", "label": "Fixed answers", "architect": [], "rules": rules["labels"]})
+    return out
+
+
+def knowledge_status(today=None) -> dict:
+    """How fresh the model and pattern knowledge is."""
+    today = today or datetime.date.today()
+
+    def age(d):
+        return (today - datetime.date.fromisoformat(d)).days if d else None
+    mk, pk = catalog.MODEL_KNOWLEDGE, PATTERN_KNOWLEDGE
+    models = [{**{k: m.get(k) for k in ("id", "label", "provider", "tier", "in", "out", "status", "verified_on", "source", "review_note")},
+               "age_days": age(m.get("verified_on"))} for m in mk["models"]]
+    stale = [m for m in models if m["status"] != "verified" or (m["age_days"] or 0) > mk["review_every_days"]]
+    return {
+        "models": models, "watchlist": mk.get("watchlist", []), "model_review_every_days": mk["review_every_days"],
+        "models_verified": len(models) - len(stale), "models_total": len(models),
+        "models_needing_review": [m["id"] for m in stale],
+        "patterns_reviewed_on": pk["reviewed_on"], "patterns_age_days": age(pk["reviewed_on"]),
+        "patterns_stale": age(pk["reviewed_on"]) > pk["review_every_days"],
+        "principles": pk["principles"], "sources": pk["sources"],
+        "jev": {"label": catalog.JEV["label"], "in": catalog.JEV["in"], "status": "needs_review",
+                "note": "Price from third-party launch write-ups; confirm with TypeSafe.", "source": "https://typesafe.ai"},
+    }

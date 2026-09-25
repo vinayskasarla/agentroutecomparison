@@ -1,21 +1,15 @@
-"""Static catalog: models + list prices, the eval suite, and the call paths.
+"""Static catalog: models + list prices (from knowledge/models.json), the eval suite, and the call paths.
 
 Prices are USD per 1M tokens (list price). They are defaults only — the UI lets
 you override them to match your negotiated contract before running.
 """
+import json
+import os
 
-MODELS = [
-    # provider, model id, label, input $/1M, output $/1M, tier
-    {"provider": "openai", "id": "gpt-5", "label": "GPT-5", "in": 1.25, "out": 10.00, "tier": "large"},
-    {"provider": "openai", "id": "gpt-5-mini", "label": "GPT-5 mini", "in": 0.25, "out": 2.00, "tier": "small"},
-    {"provider": "anthropic", "id": "claude-opus-5-5", "label": "Claude Opus 5.5", "in": 4.00, "out": 20.00, "tier": "large"},
-    {"provider": "anthropic", "id": "claude-sonnet-5", "label": "Claude Sonnet 5", "in": 2.00, "out": 10.00, "tier": "medium"},
-    {"provider": "anthropic", "id": "claude-haiku-4-5", "label": "Claude Haiku 4.5", "in": 1.00, "out": 5.00, "tier": "small"},
-    {"provider": "xai", "id": "grok-4", "label": "Grok 4", "in": 3.00, "out": 15.00, "tier": "large"},
-    {"provider": "xai", "id": "grok-4-fast", "label": "Grok 4 Fast", "in": 0.20, "out": 0.50, "tier": "small"},
-    {"provider": "google", "id": "gemini-2.5-pro", "label": "Gemini 2.5 Pro", "in": 1.25, "out": 10.00, "tier": "large"},
-    {"provider": "google", "id": "gemini-2.5-flash", "label": "Gemini 2.5 Flash", "in": 0.30, "out": 2.50, "tier": "small"},
-]
+KNOWLEDGE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "knowledge")
+# Models and prices live in knowledge/models.json so they can be reviewed and dated in one place.
+MODEL_KNOWLEDGE = json.load(open(os.path.join(KNOWLEDGE_DIR, "models.json")))
+MODELS = MODEL_KNOWLEDGE["models"]
 
 PROVIDERS = {
     "openai": {"label": "OpenAI GPT", "env": "OPENAI_API_KEY", "small": "gpt-5-mini", "fallback": "claude-sonnet-5"},
@@ -29,6 +23,7 @@ MODEL_BY_ID = {m["id"]: m for m in MODELS}
 # Simulator profile per model: time-to-first-token (ms), output tokens/sec, and
 # the probability of answering an eval item correctly at each difficulty.
 SIM_PROFILE = {
+    "claude-fable-5-1": {"ttft": 1500, "tps": 60, "skill": {1: 0.995, 2: 0.98, 3: 0.96}},
     "gpt-5": {"ttft": 900, "tps": 90, "skill": {1: 0.99, 2: 0.96, 3: 0.92}},
     "gpt-5-mini": {"ttft": 450, "tps": 150, "skill": {1: 0.97, 2: 0.88, 3: 0.74}},
     "claude-opus-5-5": {"ttft": 800, "tps": 85, "skill": {1: 0.99, 2: 0.97, 3: 0.94}},

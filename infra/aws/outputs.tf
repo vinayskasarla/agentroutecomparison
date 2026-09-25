@@ -25,3 +25,13 @@ output "next_steps" {
     3. Open https://${aws_apprunner_service.app.service_url}
   EOT
 }
+
+output "audit" {
+  description = "Where the audit trail lives."
+  value = {
+    log_group = local.app_log_group
+    dashboard = "https://${var.region}.console.aws.amazon.com/cloudwatch/home?region=${var.region}#dashboards/dashboard/${aws_cloudwatch_dashboard.audit.dashboard_name}"
+    queries   = [for q in aws_cloudwatch_query_definition.audit : q.name]
+    retention = "Set how long to keep audit logs: aws logs put-retention-policy --log-group-name '${local.app_log_group}' --retention-in-days 400"
+  }
+}

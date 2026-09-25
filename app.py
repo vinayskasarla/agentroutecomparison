@@ -18,16 +18,34 @@ import time
 import uuid
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import catalog
 import advisor
+import audit
+from pii import redact
 from providers import ROUTE_QUESTION, call_jev, call_llm, has_jev_key, has_key, jev_answer_question
 
 app = FastAPI(title="LLM Path Lab")
+PAGES = {"/": "advisor", "/ask": "ask", "/benchmark": "benchmark"}
+
+
+@app.middleware("http")
+async def request_context(request: Request, call_next):
+    """Request and session IDs for the audit trail, plus a page_view event per page load."""
+    request.state.request_id = uuid.uuid4().hex[:12]
+    request.state.session_id = request.cookies.get("plab_sid") or uuid.uuid4().hex[:16]
+    if request.method == "GET" and request.url.path in PAGES:
+        audit.log("page_view", request, page=PAGES[request.url.path])
+    response = await call_next(request)
+    if "plab_sid" not in request.cookies:
+        response.set_cookie("plab_sid", request.state.session_id, httponly=True, samesite="lax",
+                            secure=request.headers.get("x-forwarded-proto", request.url.scheme) == "https")
+    response.headers["X-Request-Id"] = request.state.request_id
+    return response
 SELF_URL = os.environ.get("SELF_URL", "http://127.0.0.1:8088")
 _http = httpx.AsyncClient(timeout=180)
 
@@ -86,20 +104,7 @@ def semantic_lookup(ns, prompt, threshold):
 
 
 # ------------------------------------------------------------ middleware logic
-PII_PATTERNS = [
-    (re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+"), "<EMAIL>"),
-    (re.compile(r"\b(?:\d[ -]?){13,16}\b"), "<CARD>"),
-    (re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), "<SSN>"),
-]
 INJECTION = re.compile(r"ignore (all|previous|prior) instructions|reveal (the )?system prompt", re.I)
-
-
-def redact(prompt):
-    count = 0
-    for pat, repl in PII_PATTERNS:
-        prompt, n = pat.subn(repl, prompt)
-        count += n
-    return prompt, count
 
 
 def is_complex(prompt):
@@ -409,7 +414,10 @@ class RunReq(BaseModel):
 
 
 @app.post("/api/run")
-async def api_run(req: RunReq):
+async def api_run(req: RunReq, request: Request):
+    audit.log("ask_question" if req.workload == "custom" and req.cache_scope else "benchmark_run", request,
+              model=req.model, workload=req.workload, prompt=req.prompt if req.workload == "custom" else None,
+              routes=req.paths, passes=req.passes, force_sim=req.force_sim, outage_test=bool(req.fault_rate))
     a = {**catalog.DEFAULT_ASSUMPTIONS, **req.assumptions}
     run_id = uuid.uuid4().hex[:8]
     scope = re.sub(r"[^a-zA-Z0-9]", "", req.cache_scope)[:32]
@@ -485,9 +493,11 @@ class AdviseReq(BaseModel):
 
 
 @app.post("/api/advise")
-async def api_advise(req: AdviseReq):
+async def api_advise(req: AdviseReq, request: Request):
     """Understand the goal, write test cases, test the models on them, and rank architectures."""
     queue: asyncio.Queue = asyncio.Queue()
+    started = time.perf_counter()
+    audit.log("advise_requested", request, goal=req.goal, edited=bool(req.spec), force_sim=req.force_sim)
 
     async def work():
         await queue.put({"type": "stage", "stage": "understand"})
@@ -504,7 +514,8 @@ async def api_advise(req: AdviseReq):
             spec, source = advisor.spec_from_rules(req.goal), "rules"
         spec = advisor.finalize_spec(spec)
         items = normalize_items(advisor.items_for(spec))
-        await queue.put({"type": "spec", "spec": spec, "source": source, "note": note,
+        confirm = advisor.cross_check(spec, req.goal) if source == "claude" and req.goal else []
+        await queue.put({"type": "spec", "spec": spec, "source": source, "note": note, "confirm": confirm,
                          "architect_model": advisor.ARCHITECT_MODEL if source == "claude" else None})
 
         live_providers = [p for p in catalog.PROVIDERS if has_key(p)] if not req.force_sim else []
@@ -547,6 +558,18 @@ async def api_advise(req: AdviseReq):
         jev = list(await asyncio.gather(*[one_jev(it) for it in items])) if use_jev else None
         await queue.put({"type": "stage", "stage": "rank"})
         result = advisor.rank_designs(spec, res, jev)
+        status = {m["id"]: m["status"] for m in catalog.MODELS}
+        for d in result["all"]:
+            d["unverified_models"] = sorted({m for m in d["models"].values() if m and status.get(m) != "verified"})
+        audit.log("advise_completed", request, goal=req.goal, spec_source=source, task_type=spec["task_type"],
+                  labels=spec["labels"], latency=spec["latency"], requests_per_day=spec["requests_per_day"],
+                  risk=spec["risk"], cases=len(items), models_tested=models, simulated=not live_providers,
+                  needs_confirmation=[c["field"] for c in confirm],
+                  top3=[{"rank": i + 1, "architecture": d["arch"], "model": d["models"]["primary"],
+                         "fallback": d["models"]["fallback"], "small": d["models"]["small"],
+                         "accuracy": d["accuracy"], "p95_ms": round(d["p95_ms"]), "monthly_usd": round(d["monthly"], 2),
+                         "meets_requirements": d["passes"]} for i, d in enumerate(result["top"])],
+                  duration_ms=round((time.perf_counter() - started) * 1000))
         await queue.put({"type": "advice", **result, "evaluated_models": models,
                          "simulated": any(r["simulated"] for rs in res.values() for r in rs),
                          "cases": [{"input": c["input"], "expected": c["expected"]} for c in spec["test_cases"]],
@@ -562,10 +585,65 @@ async def api_advise(req: AdviseReq):
             except asyncio.TimeoutError:
                 continue
         if task.exception():
+            audit.log("advise_failed", request, goal=req.goal, error=f"{type(task.exception()).__name__}: {task.exception()}")
             yield json.dumps({"type": "error", "error": f"{type(task.exception()).__name__}: {task.exception()}"}) + "\n"
         yield json.dumps({"type": "done"}) + "\n"
 
     return StreamingResponse(stream(), media_type="application/x-ndjson")
+
+
+class ClientEvent(BaseModel):
+    event: str
+    data: dict = {}
+
+
+@app.post("/api/events")
+async def api_events(ev: ClientEvent, request: Request):
+    """Browser-side actions worth auditing (downloads, re-runs). Unknown event names are ignored."""
+    if ev.event in audit.ALLOWED_CLIENT_EVENTS:
+        audit.log(ev.event, request, **{k: v for k, v in list(ev.data.items())[:20]})
+    return {"ok": True}
+
+
+@app.get("/api/knowledge")
+async def api_knowledge():
+    return advisor.knowledge_status()
+
+
+NON_CHAT = re.compile(r"embed|tts|whisper|dall-e|image|audio|moderation|realtime|transcri|search|computer|veo|imagen|aqa|speech|video", re.I)
+
+
+@app.post("/api/knowledge/check")
+async def api_knowledge_check(request: Request):
+    """Compare the catalog with each provider's live model list: flags retired IDs and new ones to review."""
+    out = {}
+    for provider, info in catalog.PROVIDERS.items():
+        ours = [m["id"] for m in catalog.MODELS if m["provider"] == provider]
+        if not has_key(provider):
+            out[provider] = {"checked": False, "reason": f"{info['env']} not set"}
+            continue
+        try:
+            key = os.environ[info["env"]]
+            if provider == "anthropic":
+                client = __import__("anthropic").AsyncAnthropic()
+                live = [m.id async for m in client.models.list(limit=1000)]
+            elif provider == "google":
+                r = await _http.get("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000",
+                                    headers={"x-goog-api-key": key})
+                r.raise_for_status()
+                live = [m["name"].split("/", 1)[-1] for m in r.json().get("models", [])]
+            else:
+                base = "https://api.openai.com/v1" if provider == "openai" else "https://api.x.ai/v1"
+                r = await _http.get(f"{base}/models", headers={"Authorization": f"Bearer {key}"})
+                r.raise_for_status()
+                live = [m["id"] for m in r.json().get("data", [])]
+        except Exception as exc:
+            out[provider] = {"checked": False, "reason": f"{type(exc).__name__}: {str(exc)[:160]}"}
+            continue
+        out[provider] = {"checked": True, "missing": [m for m in ours if m not in live],
+                         "new": sorted(m for m in live if m not in ours and not NON_CHAT.search(m))[:40]}
+    audit.log("knowledge_checked", request, result={p: {k: v for k, v in r.items() if k != "new"} for p, r in out.items()})
+    return out
 
 
 @app.get("/api/config")

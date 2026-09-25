@@ -26,6 +26,10 @@ resource "aws_apprunner_service" "app" {
         runtime_environment_variables = {
           PORT     = "8080"
           SELF_URL = "http://127.0.0.1:8080"
+          # Headers the SSO layer sets with the signed-in user (first match wins), and whether to redact
+          # personal data from goals and prompts before they're written to the audit log.
+          AUDIT_USER_HEADERS = var.audit_user_headers
+          AUDIT_REDACT_PII   = "true"
         }
         # Each env var is filled from its secret when a deployment starts.
         runtime_environment_secrets = { for k, s in aws_secretsmanager_secret.keys : k => s.arn }

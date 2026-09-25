@@ -6,8 +6,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py catalog.py providers.py ./
+COPY *.py ./
 COPY static ./static
+COPY knowledge ./knowledge
 
 RUN useradd --system --no-create-home app
 USER app

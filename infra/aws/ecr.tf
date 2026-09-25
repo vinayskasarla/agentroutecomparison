@@ -31,6 +31,7 @@ locals {
   src_files = sort(setunion(
     fileset(local.app_root, "*.py"),
     fileset(local.app_root, "static/**"),
+    fileset(local.app_root, "knowledge/**"),
     toset(["requirements.txt", "Dockerfile"]),
   ))
   image_tag = substr(sha1(join("", [for f in local.src_files : filesha1("${local.app_root}/${f}")])), 0, 12)

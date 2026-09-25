@@ -100,6 +100,69 @@ Model IDs, list prices, simulator profiles, the eval suite and each route's capa
 `catalog.py`. Prices are defaults: override the selected model's price in the UI under **Assumptions**, or
 edit the catalog to match your contracts and the latest model versions.
 
+## Keeping the advice trustworthy
+
+The advisor is meant to be a single source of truth, so what it knows is kept in reviewed, dated files. The
+decision itself is made by rules plus measurements, never written by an LLM.
+
+- **`knowledge/models.json`:** every model with its list price, `status` (`verified` or `needs_review`), a
+  `verified_on` date and the official pricing `source`. The header pill shows how many prices are verified.
+  - A price counts as stale after `review_every_days` (60).
+  - Primary and fallback picks prefer models with verified prices, and cards flag any unverified price.
+  - A `watchlist` holds newer models reported by pricing trackers until their API IDs and prices are
+    confirmed.
+- **`knowledge/patterns.json`:** the architecture patterns, the conditions each fits, components (e.g. the
+  vector index for RAG) and design principles, each tied to a published source:
+  - [Anthropic, Building effective agents](https://www.anthropic.com/engineering/building-effective-agents)
+  - [OpenAI, A practical guide to building agents](https://cdn.openai.com/business-guides-and-resources/a-practical-guide-to-building-agents.pdf)
+  - [AWS Well-Architected Generative AI Lens](https://docs.aws.amazon.com/wellarchitected/latest/generative-ai-lens/generative-ai-lens.html)
+  - [AWS Well-Architected Agentic AI Lens](https://docs.aws.amazon.com/wellarchitected/latest/agentic-ai-lens/agentic-ai-lens.html)
+- **Live model check:** "Check models against provider APIs" in the knowledge panel, or
+  `POST /api/knowledge/check`. It lists each provider's models using your keys, and reports catalog IDs that
+  were retired or renamed, plus new model IDs not yet in the catalog.
+- **Cross-check:** when Claude reads the goal, its reading is compared with the keyword rules. Any
+  disagreement (task type, documents, actions, latency, personal data, labels) is shown for the user to
+  confirm before relying on the result.
+
+**Review routine (about 30 minutes a month).** An owner should:
+1. Run the live check.
+2. Confirm prices on each provider's official page, then update `models.json` (price, `status`,
+   `verified_on`).
+3. Move confirmed watchlist models into the catalog, adding a simulator profile in `catalog.py`.
+4. Revisit `patterns.json` each quarter.
+
+## Audit trail (CloudWatch)
+
+Every user action is written as one JSON line on stdout with `"log_type": "audit"`; App Runner ships it to
+CloudWatch Logs. Events:
+
+- `page_view`
+- `advise_requested` and `advise_completed` (goal, how it was understood, models tested, top 3 with models
+  and cost), or `advise_failed`
+- `ask_question` and `benchmark_run`
+- `adr_downloaded`, `adjust_opened`, `example_used`, `knowledge_opened`, `details_opened`
+- `knowledge_checked`
+
+Each event carries `user` (from SSO), `session_id`, `request_id`, IP and user agent. Personal data in goals and
+prompts (emails, card, phone and SSN numbers) is redacted before logging (`AUDIT_REDACT_PII=true`).
+
+**SSO:** the user is read from headers set by the SSO layer in front of the app (`AUDIT_USER_HEADERS`,
+first match wins):
+- ALB or Cognito OIDC sets `x-amzn-oidc-data`, a JWT whose `email` and `sub` claims are used.
+- oauth2-proxy sets `x-forwarded-email`.
+
+Only trust these headers if the app can be reached solely through that layer. App Runner's public URL
+bypasses it, so either make the service private behind your SSO proxy, or run it on ECS behind an ALB with
+OIDC authentication.
+
+`terraform apply` adds these CloudWatch resources:
+- saved Logs Insights queries: *who asked what*, *recommended architectures*, *activity by user*,
+  *all actions* and *failures*;
+- `AdviceCompleted` and `AdviceFailed` metrics, with an alarm on failures;
+- a **usage dashboard**.
+
+The `audit` output prints the log group, the dashboard link and a command to set log retention.
+
 ## Deploy to AWS (Terraform)
 
 `infra/aws/` creates everything needed to run the app on AWS App Runner:

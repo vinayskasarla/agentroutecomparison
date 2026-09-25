@@ -1,0 +1,90 @@
+{
+  "reviewed_on": "2026-09-25",
+  "review_every_days": 90,
+  "sources": {
+    "anthropic": {"title": "Anthropic — Building effective agents", "url": "https://www.anthropic.com/engineering/building-effective-agents"},
+    "openai": {"title": "OpenAI — A practical guide to building agents", "url": "https://cdn.openai.com/business-guides-and-resources/a-practical-guide-to-building-agents.pdf"},
+    "aws_genai": {"title": "AWS Well-Architected — Generative AI Lens", "url": "https://docs.aws.amazon.com/wellarchitected/latest/generative-ai-lens/generative-ai-lens.html"},
+    "aws_agentic": {"title": "AWS Well-Architected — Agentic AI Lens", "url": "https://docs.aws.amazon.com/wellarchitected/latest/agentic-ai-lens/agentic-ai-lens.html"},
+    "typesafe": {"title": "TypeSafe — Jev (System One model)", "url": "https://typesafe.ai"}
+  },
+  "principles": [
+    "Start with the simplest design that meets the requirements; add steps or autonomy only when measurement shows the need.",
+    "Prefer predictable workflows over autonomous agents when the steps are known in advance.",
+    "Put guardrails and a human in the loop before irreversible or high-impact actions.",
+    "Ground answers in your data (RAG or long context) rather than the model's memory when facts matter.",
+    "Keep an evaluation set and re-run it before every prompt or model change."
+  ],
+  "patterns": {
+    "single_call": {
+      "name": "Single model call", "complexity": 1, "sources": ["anthropic", "aws_genai"],
+      "flow": ["App", "AI Gateway", "LLM"],
+      "what": "One well-prompted call with structured output.",
+      "pick_if": "one model is accurate enough and the task is a single step.",
+      "components": ["Prompt template in version control", "JSON-schema structured output"]
+    },
+    "cascade": {
+      "name": "Small model first, escalate when unsure", "complexity": 2, "sources": ["anthropic", "aws_genai"],
+      "flow": ["App", "AI Gateway", "Small LLM", "Large LLM if unsure"],
+      "what": "A cheap model answers; low-confidence answers go to a stronger model (routing).",
+      "pick_if": "most requests are easy and cost or speed matter, but hard cases need a big model.",
+      "components": ["Confidence score in the output schema", "Escalation threshold tuned on the eval set"]
+    },
+    "decision_model": {
+      "name": "Decision model with LLM fallback", "complexity": 2, "sources": ["typesafe", "anthropic"],
+      "flow": ["App", "AI Gateway", "Jev", "LLM if unsure"],
+      "what": "Jev returns a typed decision with calibrated probabilities; unsure requests go to an LLM.",
+      "pick_if": "the answer is one of a fixed set of labels, at high volume or low latency.",
+      "components": ["Label set with descriptions", "Confidence threshold (default 0.8)"]
+    },
+    "long_context": {
+      "name": "Whole documents in the prompt", "complexity": 1, "sources": ["aws_genai"],
+      "flow": ["App", "AI Gateway", "LLM + your documents"],
+      "what": "Send the documents with each request; answer only from them. No index to build.",
+      "pick_if": "documents are small (under ~100 pages) and change rarely.",
+      "components": ["Prompt caching for the document block", "\"Answer only from the text, else unknown\" instruction"]
+    },
+    "rag": {
+      "name": "Retrieval-augmented generation (RAG)", "complexity": 3, "sources": ["aws_genai", "anthropic"],
+      "flow": ["App", "Search your documents", "AI Gateway", "LLM"],
+      "what": "Retrieve the relevant passages, then answer only from them or say it doesn't know.",
+      "pick_if": "answers must come from large or changing documents.",
+      "components": ["Chunking + embeddings pipeline", "Vector index (OpenSearch Serverless or Aurora pgvector)", "Hybrid keyword + vector search with reranking", "Citations in answers"]
+    },
+    "workflow": {
+      "name": "Fixed workflow (prompt chain)", "complexity": 3, "sources": ["anthropic", "openai"],
+      "flow": ["App", "Agent Runtime", "Classify", "Tested handler", "Check"],
+      "what": "Steps defined in code — route the request, run a tested handler, verify — each a focused model call.",
+      "pick_if": "the steps are known in advance and you want control and testability.",
+      "components": ["Step functions or code orchestration", "Per-step evals", "Approval step before irreversible actions"]
+    },
+    "evaluator_optimizer": {
+      "name": "Draft, critique and revise", "complexity": 3, "sources": ["anthropic"],
+      "flow": ["App", "AI Gateway", "Writer LLM", "Reviewer LLM", "Revise"],
+      "what": "One call drafts, another checks it against clear criteria, and the draft is revised once.",
+      "pick_if": "written quality matters and you can state what 'good' looks like.",
+      "components": ["Written review rubric", "Max one or two revision rounds"]
+    },
+    "tool_agent": {
+      "name": "Tool-using agent", "complexity": 4, "sources": ["openai", "anthropic", "aws_agentic"],
+      "flow": ["App", "Agent Runtime", "LLM ⇄ your tools", "Human approval"],
+      "what": "The model chooses which of your tools to call, in a loop, until the task is done.",
+      "pick_if": "it must act in your systems and the steps vary per request.",
+      "components": ["Narrow tools with strict schemas", "Per-tool permissions and step limits", "Tracing of every tool call"]
+    },
+    "multi_agent": {
+      "name": "Orchestrator with specialist agents", "complexity": 5, "sources": ["anthropic", "openai", "aws_agentic"],
+      "flow": ["App", "Agent Runtime", "Orchestrator", "Parallel workers", "Synthesis"],
+      "what": "A lead model splits the task, workers research in parallel, the lead combines results.",
+      "pick_if": "tasks are broad and open-ended and quality beats cost.",
+      "components": ["Budget and step caps per run", "Shared scratchpad / memory store", "Citations for every claim"]
+    },
+    "batch": {
+      "name": "Batch pipeline", "complexity": 2, "sources": ["aws_genai"],
+      "flow": ["Queue", "Batch API", "LLM", "Results store"],
+      "what": "Collect requests and run them through the providers' batch APIs at about half price.",
+      "pick_if": "nobody waits for the answer (nightly jobs, backfills).",
+      "components": ["SQS queue", "Batch submit + poll job", "S3 results store with retries"]
+    }
+  }
+}
