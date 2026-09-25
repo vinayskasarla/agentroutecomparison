@@ -12,6 +12,7 @@ import statistics
 import anthropic
 
 import catalog
+import policy
 
 ARCHITECT_MODEL = os.environ.get("ARCHITECT_MODEL", "claude-opus-5")
 
@@ -450,7 +451,7 @@ def model_table(first, spec, res, jev, picks, mode):
         rows.append(row(m, d, True))
     tested_ids = list(res)
     for info in catalog.MODELS:
-        if info.get("callable", True) or info["id"] in res:
+        if info.get("callable", True) or info["id"] in res or not policy.model_allowed(info["id"]):
             continue
         same = [t for t in tested_ids if catalog.MODEL_BY_ID[t]["tier"] == info["tier"]] or tested_ids
         ref = next((t for t in same if catalog.MODEL_BY_ID[t]["maker"] == info["maker"]), same[0])
@@ -491,7 +492,7 @@ def cheaper_unverified(table, primary_id):
     return None
 
 
-def rank_designs(spec, res, jev, mode=None):
+def rank_designs(spec, res, jev, mode=None, jev_blocked=False):
     """For every architecture that fits: price every model inside it, pick its best model and fallback,
     check it against the requirements; then rank the architectures and return the top 3 with reasons."""
     mode = mode or {}
@@ -500,7 +501,8 @@ def rank_designs(spec, res, jev, mode=None):
     ok, why_not = applicable(spec)
     if jev is None and "decision_model" in ok:
         ok.remove("decision_model")
-        why_not["decision_model"] = "Jev needs a fixed set of labels to choose from"
+        why_not["decision_model"] = ("Jev (TypeSafe) is not on the company's approved vendor list" if jev_blocked
+                                     else "Jev needs a fixed set of labels to choose from")
     designs = []
     for arch in ok:
         cascade = arch in ("cascade", "rag_cascade")

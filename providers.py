@@ -13,6 +13,8 @@ import time
 import anthropic
 import httpx
 
+import policy
+
 import asyncio
 
 from catalog import JEV, MODEL_BY_ID, PROVIDERS, base_model, sim_profile
@@ -93,6 +95,10 @@ async def call_llm(model_id: str, prompt: str, *, item=None, extra_context_token
                    force_sim=False, seed=0):
     m = MODEL_BY_ID[model_id]
     provider = m["provider"]
+    allowed, why = policy.check_model(model_id)
+    if not allowed:  # defence in depth: nothing reaches an unapproved vendor, even in simulation
+        return {"text": "", "answer": "", "confidence": None, "in_tokens": 0, "out_tokens": 0, "llm_ms": 0.0,
+                "simulated": True, "model": model_id, "error": f"blocked by company policy: {why}"}
     if force_sim or not available(model_id):
         return simulate(model_id, prompt, item=item, extra_context_tokens=extra_context_tokens, seed=seed)
     start = time.perf_counter()
@@ -289,6 +295,9 @@ async def call_jev(state, questions, *, truth=None, difficulty=1, force_sim=Fals
     Returns {answers, in_tokens, jev_ms, simulated, model, error}; answers follow the API shape:
     choice -> {"type": "choice", "choice", "confidence", "probabilities"}.
     """
+    if not policy.service_allowed("jev"):
+        return {"answers": {}, "in_tokens": 0, "jev_ms": 0.0, "simulated": True, "model": JEV["model"],
+                "error": "blocked by company policy: Jev (TypeSafe) is not an approved vendor"}
     if force_sim or not has_jev_key():
         return simulate_jev(state, questions, truth or {}, difficulty, seed)
     start = time.perf_counter()

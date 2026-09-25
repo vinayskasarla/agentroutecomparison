@@ -150,6 +150,22 @@ principles, each tied to a published source (Anthropic, OpenAI, AWS Well-Archite
 Agentic AI lenses). The cross-check flags any disagreement between Claude's reading of the goal and the
 keyword rules, for the user to confirm.
 
+## Company AI vendor policy
+
+`knowledge/policy.json`, or the file named by `POLICY_FILE`, lists the approved platforms. Right now those
+are the OpenAI API, Anthropic API (Claude), xAI API (Grok), Gemini API, Amazon Bedrock and Azure AI Foundry.
+It can also block individual model makers and approve extra services such as Jev.
+
+The server enforces the policy everywhere:
+- **Evaluation:** only approved models are tested, so test cases never reach another vendor.
+- **Recommendations:** only approved models are recommended or shown in the cost table.
+- **Ask and Benchmark:** a request for a blocked model gets a 403, and a `policy_blocked` audit event is logged.
+- **Failover:** it only switches to approved models.
+- **Jev:** it stays off until `"jev"` is added to `approved_services`. That removes the decision-model pattern,
+  the Jev routes and the Jev router.
+
+The header's **Policy** pill shows what's approved and what's excluded, and why.
+
 ## Model news tab
 
 `/news` fetches the providers' official feeds when you open the tab (cached for 30 minutes; **Refresh now**

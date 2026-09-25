@@ -19,7 +19,7 @@ import uuid
 
 import httpx
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -28,6 +28,7 @@ import advisor
 import audit
 from pii import redact
 import news
+import policy
 import pricing_sync
 from providers import ROUTE_QUESTION, call_jev, call_llm, has_jev_key, has_key, jev_answer_question
 
@@ -157,8 +158,10 @@ async def llm_stage(model, prompt, ctx, extra_tokens=0, failover=False):
         if fault_hit(ctx, attempt):
             stages.append({"name": f"Provider error ({attempt_model})", "kind": "error", "ms": 250.0})
             if failover:
-                attempt_model = catalog.PROVIDERS[catalog.MODEL_BY_ID[model]["provider"]]["fallback"]
-                continue
+                attempt_model = policy.safe_fallback(model)  # only ever fail over to an approved model
+                if attempt_model:
+                    continue
+                break
             return ({"error": "provider 503 (injected fault)", "answer": "", "confidence": None,
                      "in_tokens": 0, "out_tokens": 0, "model": model, "simulated": True},
                     stages, (time.perf_counter() - t0) * 1000)
@@ -194,6 +197,8 @@ def jev_stage(label, r):
 
 async def jev_route(model, prompt, ctx):
     """Ask Jev whether the provider's small model is enough. Returns (model_to_use, stage, jev_tokens)."""
+    if not policy.service_allowed("jev"):
+        return model, {"name": "Jev router off (vendor not approved)", "kind": "jev", "ms": 0.0, "simulated": True}, 0
     item = graded_item(ctx)
     needs_large = item["difficulty"] >= 2 if item else is_complex(prompt)
     r = await call_jev(prompt, ROUTE_QUESTION, truth={"route": "large" if needs_large else "small"},
@@ -202,6 +207,8 @@ async def jev_route(model, prompt, ctx):
         return model, jev_stage("Jev router failed → keep model", r), 0
     a = r["answers"]["route"]
     small = catalog.PROVIDERS[catalog.MODEL_BY_ID[model]["provider"]]["small"]
+    if not policy.model_allowed(small):
+        small = model
     return (small if a["choice"] == "small" else model), jev_stage(
         f"Jev router → {a['choice']} ({a['confidence']:.2f})", r), r["in_tokens"]
 
@@ -430,6 +437,10 @@ class RunReq(BaseModel):
 
 @app.post("/api/run")
 async def api_run(req: RunReq, request: Request):
+    allowed, why = policy.check_model(req.model) if req.model in catalog.MODEL_BY_ID else (False, "unknown model")
+    if not allowed:
+        audit.log("policy_blocked", request, model=req.model, reason=why)
+        return JSONResponse({"error": f"{req.model} is blocked by company policy: {why}"}, status_code=403)
     audit.log("ask_question" if req.workload == "custom" and req.cache_scope else "benchmark_run", request,
               model=req.model, workload=req.workload, prompt=req.prompt if req.workload == "custom" else None,
               routes=req.paths, passes=req.passes, force_sim=req.force_sim, outage_test=bool(req.fault_rate))
@@ -449,6 +460,8 @@ async def api_run(req: RunReq, request: Request):
     live = has_key(catalog.MODEL_BY_ID[req.model]["provider"]) and not req.force_sim
     # Jev alone can only pick from options, so it's a candidate only when every test case has them
     paths = [p for p in req.paths if not (p == "jev" and not all(i.get("options") and i.get("accept") for i in items))]
+    if not policy.service_allowed("jev"):  # Jev-based routes need an approved Jev vendor
+        paths = [p for p in paths if p not in ("jev", "jev_llm", "gateway_jev")]
 
     async def worker(path_id):
         for pas in range(1, max(1, min(req.passes, 5)) + 1):
@@ -535,8 +548,11 @@ async def api_advise(req: AdviseReq, request: Request):
 
         live_providers = [p for p in catalog.PROVIDERS if has_key(p)] if not req.force_sim else []
         # Every callable offering is tested: live where this server has access, simulated elsewhere (labelled per row).
-        models = [m["id"] for m in catalog.CALLABLE]
-        use_jev = bool(spec["labels"]) and all(i.get("options") and i.get("accept") for i in items)
+        # Only approved models are tested, so test cases never reach an unapproved vendor.
+        models = [m["id"] for m in catalog.CALLABLE if policy.model_allowed(m["id"])]
+        use_jev = (policy.service_allowed("jev") and bool(spec["labels"])
+                   and all(i.get("options") and i.get("accept") for i in items))
+        jev_blocked = bool(spec["labels"]) and not policy.service_allowed("jev")
         total = len(items) * (len(models) + (1 if use_jev else 0))
         await queue.put({"type": "stage", "stage": "test", "models": models, "cases": len(items), "total": total,
                          "live": bool(live_providers), "jev": use_jev, "jev_live": has_jev_key() and not req.force_sim})
@@ -578,7 +594,9 @@ async def api_advise(req: AdviseReq, request: Request):
         mode = {m: "simulated" if all(r["simulated"] for r in rs) else "live" for m, rs in res.items()}
         jev = list(await asyncio.gather(*[one_jev(it) for it in items])) if use_jev else None
         await queue.put({"type": "stage", "stage": "rank"})
-        result = advisor.rank_designs(spec, res, jev, mode)
+        result = advisor.rank_designs(spec, res, jev, mode, jev_blocked=jev_blocked)
+        result["policy"] = {"name": policy.POLICY["name"], "approved_platforms": sorted(policy.APPROVED_PLATFORMS),
+                            "excluded": [e for e in policy.summary()["excluded"]]}
         for row in result["model_table"]:
             if row["id"] in unavailable:
                 row["mode"], row["live_error"] = "simulated", str(unavailable[row["id"]])[:160]
@@ -631,6 +649,11 @@ async def api_events(ev: ClientEvent, request: Request):
     if ev.event in audit.ALLOWED_CLIENT_EVENTS:
         audit.log(ev.event, request, **{k: v for k, v in list(ev.data.items())[:20]})
     return {"ok": True}
+
+
+@app.get("/api/policy")
+async def api_policy():
+    return policy.summary()
 
 
 @app.get("/api/me")
@@ -708,6 +731,8 @@ async def api_config():
         "keys": {p: has_key(p) for p in catalog.PROVIDERS}, "cache_backend": await cache_backend(),
         "jev": {**catalog.JEV, "has_key": has_jev_key()}, "options": catalog.OPTIONS,
         "architect": {"claude": advisor.claude_available(), "model": advisor.ARCHITECT_MODEL},
+        "policy": policy.summary(), "approved_models": [m["id"] for m in catalog.MODELS if policy.model_allowed(m["id"])],
+        "jev_allowed": policy.service_allowed("jev"),
     }
 
 

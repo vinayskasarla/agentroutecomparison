@@ -15,10 +15,20 @@
       <nav class="tabs"><a href="/" class="on">Architecture advisor</a><a href="/ask">Ask a question</a><a href="/benchmark">Benchmark</a><a href="/news">Model news</a></nav>
     </div>
     <div class="hdr-right">
+      <button class="kpill" id="ppill" title="Company AI vendor policy"></button>
       <button class="kpill" id="kpill" title="Where prices and patterns come from"></button>
       <button class="ghost" id="theme" title="Toggle light / dark">◐</button>
     </div>
   </header>
+
+  <!-- policy panel -->
+  <section class="card hidden" id="ppanel">
+    <div class="cardhead"><div><h2 id="pname">Company AI vendor policy</h2><p class="hint" id="pmeta" style="margin:0"></p></div>
+      <button class="ghost" id="pclose">Close</button></div>
+    <p class="hint">Only approved vendors are tested, recommended or callable — test cases are never sent anywhere else. The server enforces this on every call; change it in <code>knowledge/policy.json</code>.</p>
+    <div class="two"><div><h3 class="h3">Approved</h3><div class="pgrid" id="papproved"></div></div>
+      <div><h3 class="h3">Not approved</h3><ul class="facts" id="pexcluded"></ul></div></div>
+  </section>
 
   <!-- knowledge panel -->
   <section class="card hidden" id="kpanel">
@@ -169,6 +179,8 @@ $("#rerun").onclick = () => advise({ goal: $("#goal").value.trim(), spec: readAd
 $("#adr").onclick = downloadADR;
 $("#kpill").onclick = () => { $("#kpanel").classList.toggle("hidden"); track("knowledge_opened", {}); };
 $("#kclose").onclick = () => $("#kpanel").classList.add("hidden");
+$("#ppill").onclick = () => { $("#ppanel").classList.toggle("hidden"); track("knowledge_opened", { panel: "policy" }); };
+$("#pclose").onclick = () => $("#ppanel").classList.add("hidden");
 $("#kcheck").onclick = liveCheck;
 $("#ksync").onclick = syncPrices;
 $("#onlyMeets").onchange = () => { PAGE = 1; renderTable(); };
@@ -176,7 +188,17 @@ document.querySelectorAll("details[data-d]").forEach((d) => d.addEventListener("
 function track(event, data) { fetch("/api/events", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ event, data }) }).catch(() => {}); }
 
 function loadKnowledge() { return fetch("/api/knowledge").then((r) => r.json()).then((k) => { KNOW = k; renderKnowledge(); }); }
-fetch("/api/config").then((r) => r.json()).then((cfg) => { CFG = cfg; return loadKnowledge(); });
+fetch("/api/config").then((r) => r.json()).then((cfg) => { CFG = cfg; renderPolicy(); return loadKnowledge(); });
+function renderPolicy() {
+  const pol = CFG.policy;
+  $("#ppill").innerHTML = `<i class="dot" style="background:var(--good)"></i>Policy: ${pol.approved_platforms.length} approved vendors`;
+  $("#pname").textContent = pol.name;
+  $("#pmeta").textContent = `Owner: ${pol.owner || "—"} · reviewed ${pol.reviewed_on || "—"} · ${pol.approved_models} model offerings allowed`;
+  $("#papproved").innerHTML = pol.approved_platforms.map((p) => `<span class="req ok">✓ ${esc(p.vendor)} <small class="hint">· ${esc(p.platform)}</small></span>`).join("");
+  const svc = Object.values(pol.services).filter((x) => !x.approved).map((x) => `<li><b>${esc(x.name)}</b>: not approved. ${esc(x.why_it_matters)}</li>`);
+  const byPlat = {}; pol.excluded.forEach((e) => (byPlat[e.reason] = (byPlat[e.reason] || []).concat(e.label)));
+  $("#pexcluded").innerHTML = svc.join("") + Object.entries(byPlat).map(([r, ls]) => `<li><b>${esc(r)}</b>: ${esc([...new Set(ls)].join(", "))}</li>`).join("") || "<li>Nothing excluded.</li>";
+}
 function info(id) { return (KNOW && KNOW.models.find((x) => x.id === id)) || {}; }
 function mlabel(id) { const m = info(id); return m.label ? m.label : id; }
 function mplat(id) { return info(id).platform || ""; }
@@ -353,6 +375,7 @@ function renderTable() {
   $("#tableTitle").textContent = `Every model for this agent — priced in architecture 1, cheapest first`;
   $("#tableHint").innerHTML = `Monthly cost if each model ran in <b>${esc(d.name)}</b> at ${SPEC.requests_per_day.toLocaleString()} requests/day.` +
     (d.arch === "decision_model" && d.escalation_rate != null ? ` Here Jev answers ${pct(1 - d.escalation_rate)} of requests, so the LLM only handles the rest and the model choice changes cost very little.` : "") +
+    (ADV.policy && ADV.policy.excluded.length ? ` <b>${ADV.policy.excluded.length}</b> offerings on non-approved platforms are excluded by company policy.` : "") +
     ` Target: ${pct(SPEC.accuracy_target)} accuracy, at most ${pct(SPEC.max_hallucination)} hallucinations, 95% within ${dur(SPEC.latency_budget_ms)}.`;
   const max = Math.max(...ADV.model_table.map((r) => r.monthly));
   const result = (r) => r.id === p.primary ? '<span class="tagp">Best model</span>' : r.id === p.fallback ? '<span class="tagf">Fallback</span>'

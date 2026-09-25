@@ -152,11 +152,11 @@ fetch("/api/config").then((r) => r.json()).then((cfg) => {
   const sel = $("#model");
   for (const [pid, p] of Object.entries(cfg.providers)) {
     const g = document.createElement("optgroup"); g.label = p.label;
-    cfg.models.filter((m) => m.provider === pid && m.callable !== false).forEach((m) => {
+    cfg.models.filter((m) => m.provider === pid && m.callable !== false && cfg.approved_models.includes(m.id)).forEach((m) => {
       const o = document.createElement("option"); o.value = m.id; o.textContent = `${m.label}${m.platform && !m.platform.startsWith(m.maker) ? " · " + m.platform : ""}  ·  $${m.in} / $${m.out}`;
       g.appendChild(o);
     });
-    sel.appendChild(g);
+    if (g.children.length) sel.appendChild(g);
   }
   sel.value = "claude-sonnet-5";
   sel.onchange = onModel; $("#forceSim").onchange = onModel; onModel();
@@ -181,7 +181,7 @@ function onModel() {
 }
 
 function renderPaths() {
-  $("#paths").innerHTML = CFG.paths.map((p) => `
+  $("#paths").innerHTML = CFG.paths.filter((p) => CFG.jev_allowed || !["jev", "jev_llm", "gateway_jev"].includes(p.id)).map((p) => `
     <label class="path" data-id="${p.id}">
       <h3><span>${esc(p.name)} ${p.id === "platform" ? '<span class="tag">enablement platform</span>' : ""}</span>
         <input type="checkbox" checked data-path="${p.id}"></h3>

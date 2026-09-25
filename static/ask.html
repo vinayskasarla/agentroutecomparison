@@ -98,14 +98,14 @@ fetch("/api/config").then((r) => r.json()).then((cfg) => {
   CFG = cfg;
   for (const [pid, p] of Object.entries(cfg.providers)) {
     const g = document.createElement("optgroup"); g.label = p.label;
-    cfg.models.filter((m) => m.provider === pid && m.callable !== false).forEach((m) => {
+    cfg.models.filter((m) => m.provider === pid && m.callable !== false && cfg.approved_models.includes(m.id)).forEach((m) => {
       const o = document.createElement("option"); o.value = m.id; o.textContent = `${m.label}${m.platform && !m.platform.startsWith(m.maker) ? " · " + m.platform : ""}  ·  $${m.in} / $${m.out}`; g.appendChild(o);
     });
-    $("#model").appendChild(g);
+    if (g.children.length) $("#model").appendChild(g);
   }
   $("#model").value = "claude-sonnet-5";
   $("#model").onchange = keyChip; $("#forceSim").onchange = keyChip; keyChip();
-  $("#routes").innerHTML = cfg.paths.filter((p) => p.id !== "jev").map((p) =>
+  $("#routes").innerHTML = cfg.paths.filter((p) => p.id !== "jev" && (cfg.jev_allowed || !["jev", "jev_llm", "gateway_jev"].includes(p.id))).map((p) =>
     `<label class="rchip"><input type="checkbox" checked data-path="${p.id}"> ${esc(p.name)}</label>`).join("");
 });
 
