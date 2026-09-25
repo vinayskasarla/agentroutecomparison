@@ -150,6 +150,24 @@ principles, each tied to a published source (Anthropic, OpenAI, AWS Well-Archite
 Agentic AI lenses). The cross-check flags any disagreement between Claude's reading of the goal and the
 keyword rules, for the user to confirm.
 
+## Production harness
+
+Tick **Production harness** next to the goal to wrap every suggested architecture in the controls it needs in production. The controls change with the architecture and the goal:
+
+| Layer | Controls |
+|---|---|
+| Before the model | Input guardrail (prompt injection, jailbreaks, off-topic use) |
+| After the model | Output validation and retry; grounding check when answers come from your documents |
+| While it runs | Timeouts, retries and failover; tracing and cost metering; tool permissions and approval (agents that act); step, time and spend limits (loops and multi-step designs); escalation monitor (cascades) |
+| Keeping it good | Regression test suite (this run's test cases); live quality sampling |
+
+The harness cost and latency are added to every figure: the ranking, the winner, the fallback and the every-model table. So a simpler architecture can overtake one that needs more controls. Controls that call a model are priced from the run's measured results, and each row shows how its cost was worked out:
+- the guardrail and the grounding check cost one small-model call each;
+- retries are priced at the measured failure rate;
+- live sampling grades 2% of traffic, an assumption you can change in `knowledge/harness.json`.
+
+All harness figures are labelled estimates. With the box unticked, the page shows prototype numbers, and it warns when the goal takes actions, carries high risk or handles personal data. The controls and their sources are in `knowledge/harness.json`.
+
 ## Company AI vendor policy
 
 `knowledge/policy.json`, or the file named by `POLICY_FILE`, lists the approved platforms. Right now those

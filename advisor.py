@@ -24,6 +24,8 @@ LATENCY_BUDGET_MS = {"realtime": 1500, "interactive": 5000, "background": 24 * 3
 # Patterns, their best-practice sources and review date live in knowledge/patterns.json.
 PATTERN_KNOWLEDGE = json.load(open(os.path.join(catalog.KNOWLEDGE_DIR, "patterns.json")))
 ARCHITECTURES = PATTERN_KNOWLEDGE["patterns"]
+HARNESS = json.load(open(os.path.join(catalog.KNOWLEDGE_DIR, "harness.json")))
+LOOPING = ("tool_agent", "multi_agent", "workflow", "evaluator_optimizer")
 
 # ------------------------------------------------------------------ sample test cases
 POLICY = ("Acme Returns Policy\n- Unused items can be returned within 30 days of delivery for a full refund.\n"
@@ -417,10 +419,14 @@ def build_design(arch, models, variant, res, jev, spec):
     cache = next((a for a in addons if a["id"] == "cache"), None)
     per_req = m["cost_per_req"] * (1 - spec["repeat_rate"] if cache else 1) + infra
     p95 = m["p95_ms"] + sum(a["ms"] for a in addons)
+    harness = harness_for(arch, models, res, rows, spec) if spec.get("harness") else None
+    if harness:
+        per_req += harness["cost_per_req"]
+        p95 += harness["ms"]
     d = {
         "arch": arch, **ARCHITECTURES[arch],
         "sources": [PATTERN_KNOWLEDGE["sources"][k] for k in ARCHITECTURES[arch].get("sources", [])],
-        "variant": variant, "models": dict(models), "evidence": evidence, "addons": addons,
+        "variant": variant, "models": dict(models), "evidence": evidence, "addons": addons, "harness": harness,
         "accuracy": m["accuracy"], "right": m["right"], "n": m["n"], "halluc": m["halluc"],
         "p50_ms": m["p50_ms"], "p95_ms": p95, "cost_per_req": per_req, "monthly": per_req * spec["requests_per_day"] * 30,
         "escalation_rate": (sum(1 for r in rows if r.get("escalated")) / len(rows)) if rows and arch in ("cascade", "rag_cascade", "decision_model") else None,
@@ -550,10 +556,70 @@ def addons_for(arch, spec):
     if spec["risk"] == "high":
         out.append({"id": "review", "name": "Human review", "why": "high-impact decisions below 80% confidence go to a person",
                     "ms": 0, "per_1k": 0})
-    if spec["needs_documents"] and arch not in ("rag", "rag_cascade", "long_context"):
+    if spec["needs_documents"] and arch not in ("rag", "rag_cascade", "long_context") and not spec.get("harness"):
         out.append({"id": "grounding", "name": "Grounding check", "why": "verify each answer is supported by your documents",
                     "ms": 0, "per_1k": 0})
     return out
+
+
+def harness_for(arch, models, res, rows, spec):
+    """The production controls around one architecture. Controls that call a model are priced from this run's
+    measured results (a small-model call per request, retries at the measured failure rate); the rest add no
+    model cost. Every figure carries the basis it was worked out from."""
+    main = _agg(_direct_rows(res, models["primary"]))
+    small_id = models.get("small") if models.get("small") in res else models["primary"]
+    small = _agg(_direct_rows(res, small_id))
+    s_name = catalog.MODEL_BY_ID[small_id]["label"]
+    tools = spec["needs_tools"] or arch in ("tool_agent", "multi_agent")
+    fail = (sum(1 for r in rows if r.get("error")) / len(rows)) if rows else 0.0
+    sample = HARNESS["assumptions"]["live_eval_sample_rate"]
+    n = len(rows)
+    plan = {
+        "input_guard": (True, small["cost_per_req"], small["p50_ms"] if tools else 0,
+                        f"one {s_name} call per request, " + ("finished before any action is taken" if tools
+                                                              else "run alongside the main call so it adds no wait")),
+        "output_check": (True, fail * main["cost_per_req"],
+                         main["p50_ms"] if fail >= HARNESS["assumptions"]["retry_latency_threshold"] else 0,
+                         f"retries the {round(fail * 100)}% of answers that failed in testing" if fail
+                         else "no answer failed in testing, so retries add nothing measurable"),
+        "grounding": (spec["needs_documents"], small["cost_per_req"], small["p50_ms"],
+                      f"one {s_name} call per answer, before it is shown"),
+        "tool_gate": (tools, 0.0, 0, "approvals wait for a person, outside the request"),
+        "limits": (arch in LOOPING, 0.0, 0, "configuration in the agent runtime"),
+        "calibration": (arch in ("cascade", "rag_cascade"), 0.0, 0, "computed from the traces"),
+        "failover": (True, 0.0, 0, "no cost unless the main model fails"),
+        "tracing": (True, 0.0, 0, "log storage is part of hosting"),
+        "regression": (True, 0.0, 0, f"re-runs the {n} test cases at the main model's price: "
+                                      + (f"about {_usd(n * main['cost_per_req'])}" if n * main["cost_per_req"] >= 0.01 else "under a cent")
+                                      + " per release"),
+        "live_eval": (True, sample * main["cost_per_req"], 0,
+                      f"{round(sample * 100)}% of requests graded by a judge call about the size of the main call (assumption)"),
+    }
+    controls = []
+    for cid, (applies, cost, ms, basis) in plan.items():
+        if not applies:
+            continue
+        c = HARNESS["controls"][cid]
+        controls.append({"id": cid, "name": c["name"], "layer": c["layer"], "layer_name": HARNESS["layers"][c["layer"]],
+                         "what": c["what"], "cost_per_req": cost, "monthly": cost * spec["requests_per_day"] * 30,
+                         "ms": ms, "basis": basis, "calls_model": cost > 0,
+                         "sources": [PATTERN_KNOWLEDGE["sources"][k] for k in c["sources"]]})
+    cost = sum(c["cost_per_req"] for c in controls)
+    return {"controls": controls, "cost_per_req": cost, "monthly": cost * spec["requests_per_day"] * 30,
+            "ms": sum(c["ms"] for c in controls), "per_release": n * main["cost_per_req"],
+            "sample_rate": sample, "evidence": "estimated"}
+
+
+def harness_advice(spec):
+    """Whether this goal should run with a production harness, and why."""
+    why = []
+    if spec["needs_tools"]:
+        why.append("it takes actions in your systems")
+    if spec["risk"] == "high":
+        why.append("a wrong answer has high impact")
+    if spec["handles_personal_data"]:
+        why.append("it handles personal data")
+    return {"on": bool(spec.get("harness")), "recommended": bool(why), "reasons": why}
 
 
 def checks(d, spec):
@@ -621,6 +687,10 @@ def explain(top, spec, picks):
                        f"hallucinations {_pct(first['halluc'])}.")
     reasons.append(f"About {_usd(first['monthly'])}/month at {spec['requests_per_day']:,} requests/day; "
                    f"95% of requests within {_ms(first['p95_ms'])}.")
+    if first.get("harness"):
+        h = first["harness"]
+        reasons.append(f"Includes a production harness of {len(h['controls'])} controls: {_usd(h['monthly'])}/month"
+                       + (f" and {_ms(h['ms'])} of added wait" if h["ms"] >= 1 else " with no added wait") + ".")
     arch_why = {
         "single_call": "The task is a single step, so extra moving parts would add cost and failure points without adding accuracy.",
         "cascade": f"Most requests are easy enough for {label(first['models']['small'])}; only "
@@ -662,6 +732,10 @@ def explain(top, spec, picks):
                      else f"answers in {_ms(d['p95_ms'])} instead of up to 30 minutes")
         elif abs(dl) >= 100:
             t.append(f"{_ms(abs(dl))} {'slower' if dl > 0 else 'faster'} at p95")
+        if d.get("harness") and first.get("harness"):
+            dh = len(d["harness"]["controls"]) - len(first["harness"]["controls"])
+            if dh > 0:
+                t.append(f"{dh} more harness control{'s' if dh > 1 else ''} to run")
         dc = d["complexity"] - first["complexity"]
         if dc:
             t.append("more to build and operate" if dc > 0 else "simpler to build and operate")

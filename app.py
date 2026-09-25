@@ -518,6 +518,7 @@ class AdviseReq(BaseModel):
     goal: str = ""
     spec: dict | None = None  # an edited spec from the page; skips the understanding step
     force_sim: bool = False
+    harness: bool = False  # wrap each architecture in production controls, priced into the numbers
 
 
 @app.post("/api/advise")
@@ -525,7 +526,7 @@ async def api_advise(req: AdviseReq, request: Request):
     """Understand the goal, write test cases, test the models on them, and rank architectures."""
     queue: asyncio.Queue = asyncio.Queue()
     started = time.perf_counter()
-    audit.log("advise_requested", request, goal=req.goal, edited=bool(req.spec), force_sim=req.force_sim)
+    audit.log("advise_requested", request, goal=req.goal, edited=bool(req.spec), force_sim=req.force_sim, harness=req.harness)
 
     async def work():
         await queue.put({"type": "stage", "stage": "understand"})
@@ -541,6 +542,7 @@ async def api_advise(req: AdviseReq, request: Request):
         else:
             spec, source = advisor.spec_from_rules(req.goal), "rules"
         spec = advisor.finalize_spec(spec)
+        spec["harness"] = req.harness
         items = normalize_items(advisor.items_for(spec))
         confirm = advisor.cross_check(spec, req.goal) if source == "claude" and req.goal else []
         await queue.put({"type": "spec", "spec": spec, "source": source, "note": note, "confirm": confirm,
@@ -595,6 +597,7 @@ async def api_advise(req: AdviseReq, request: Request):
         jev = list(await asyncio.gather(*[one_jev(it) for it in items])) if use_jev else None
         await queue.put({"type": "stage", "stage": "rank"})
         result = advisor.rank_designs(spec, res, jev, mode, jev_blocked=jev_blocked)
+        result["harness"] = advisor.harness_advice(spec)
         result["policy"] = {"name": policy.POLICY["name"], "approved_platforms": sorted(policy.APPROVED_PLATFORMS),
                             "excluded": [e for e in policy.summary()["excluded"]]}
         for row in result["model_table"]:
@@ -607,7 +610,7 @@ async def api_advise(req: AdviseReq, request: Request):
             d["unverified_models"] = sorted({m for m in d["models"].values() if m and status.get(m) != "verified"})
         audit.log("advise_completed", request, goal=req.goal, spec_source=source, task_type=spec["task_type"],
                   labels=spec["labels"], latency=spec["latency"], requests_per_day=spec["requests_per_day"],
-                  risk=spec["risk"], cases=len(items), models_tested=list(res), models_live=[m for m, v in mode.items() if v == "live"],
+                  risk=spec["risk"], harness=req.harness, cases=len(items), models_tested=list(res), models_live=[m for m, v in mode.items() if v == "live"],
                   models_unavailable=list(unavailable),
                   needs_confirmation=[c["field"] for c in confirm],
                   top3=[{"rank": i + 1, "architecture": d["arch"], "model": d["models"]["primary"],

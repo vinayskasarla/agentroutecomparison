@@ -54,6 +54,7 @@
     <div class="examples" id="examples"></div>
     <div class="runrow">
       <button class="primary" id="go">Get architecture advice</button>
+      <label class="check" style="margin:0" data-tip="Wrap every suggested architecture in the controls it needs in production (guardrails, output checks, limits, failover, tracing, evaluation) and include their cost and latency in the numbers and the ranking."><input type="checkbox" id="harness"> <span>Production harness</span></label>
       <label class="check" style="margin:0"><input type="checkbox" id="forceSim"> <span>Simulate (no API spend)</span></label>
       <ol class="stepper hidden" id="stepper">
         <li data-s="understand"><span></span>Understand</li><li data-s="test"><span></span>Test models</li><li data-s="rank"><span></span>Rank</li>
@@ -70,6 +71,7 @@
 
     <!-- 3. Top 3 architectures -->
     <h2 class="sectiontitle" id="archTitle">Top 3 architectures for this agent</h2>
+    <div class="hnote hidden" id="hnote"></div>
     <div class="top3" id="top3"></div>
 
     <!-- 4. Every model -->
@@ -116,6 +118,7 @@
           <div class="runrow"><button class="primary" id="rerun">Re-run</button></div>
         </div>
       </details>
+      <details data-d="harness"><summary>Production harness around architecture 1 <span class="hint" id="harnessShort"></span></summary><div id="harnessBox" style="margin-top:10px"></div></details>
       <details data-d="build"><summary>How to build architecture 1</summary><div id="build" style="margin-top:10px"></div></details>
       <details data-d="ruled"><summary>Architectures ruled out for this task</summary><ul class="facts" id="ruled" style="margin-top:10px"></ul></details>
       <details data-d="cases"><summary>Test cases and each model's answers</summary><div class="tablewrap" style="margin-top:10px"><table class="drill" id="cases"></table></div></details>
@@ -236,6 +239,7 @@ async function liveCheck() {
 async function advise(body) {
   if (!body.goal && !body.spec) { $("#goal").focus(); return; }
   body.force_sim = $("#forceSim").checked;
+  body.harness = $("#harness").checked;
   $("#go").disabled = $("#rerun").disabled = true;
   $("#stepper").classList.remove("hidden"); $("#progressWrap").classList.remove("hidden"); $("#bar").style.width = "0";
   document.querySelectorAll("#stepper li").forEach((li) => (li.className = ""));
@@ -282,7 +286,7 @@ function render() {
   $("#confirm").classList.toggle("hidden", !conf.length);
   $("#confirm").innerHTML = conf.length ? `<b>Please confirm:</b> ${conf.map((c) => `${esc(c.label)} read as <b>${esc(String(c.architect))}</b> (rules suggest ${esc(String(c.rules))})`).join(" · ")}. <a href="#" id="fixit">Adjust</a>` : "";
   if (conf.length) $("#fixit").onclick = (e) => { e.preventDefault(); document.querySelector('details[data-d="understood"]').open = true; $("#adjust").classList.remove("hidden"); };
-  PAGE = 1; renderHero(); renderArchitectures(); renderPlatforms(); renderTable(); renderDetails();
+  PAGE = 1; renderHero(); renderArchitectures(); renderPlatforms(); renderTable(); renderDetails(); renderHarness();
 }
 
 function tile(k, v, sub, state) {
@@ -329,6 +333,7 @@ function renderHero() {
         </div>` : `<p class="hint">No model on another platform met every requirement.</p>`}
       </article>
     </div>
+    ${d.harness ? `<p class="hsum">🛡 Includes a production harness: <b>${d.harness.controls.length} controls</b>, ${fmt$(d.harness.monthly)}/month${d.harness.ms >= 1 ? `, +${dur(d.harness.ms)} wait` : ", no added wait"} (estimate).</p>` : ""}
     <div class="hero-foot"><div class="reqs-row">${reqChips(d)}</div>
       <div class="ev-row"><span class="strength ${st[1]}">Evidence: ${st[0]}</span><span class="hint">${esc(st[2])}</span></div></div>
     ${cu ? `<p class="cheaper">💡 <b>${esc(cu.label)}</b> (${esc(cu.platform)}) also met every requirement at ${fmt$(cu.monthly)}/month but its price isn't verified yet — confirm it to make it eligible.</p>` : ""}`;
@@ -345,7 +350,7 @@ function renderArchitectures() {
       <div class="archhead"><span class="rank" style="background:${SERIES[i]};color:#fff">${i + 1}</span><span class="k">Architecture ${i + 1}${i === 0 ? " · recommended" : ""}</span></div>
       <h3>${esc(d.name)}</h3>
       <p class="what">${esc(d.what)}</p>
-      <div class="chain">${d.flow.map((x) => `<span class="node ${/LLM/.test(x) ? "llm" : ""}">${esc(x)}</span>`).join('<span class="arrow">→</span>')}</div>
+      ${chainHtml(d)}
       <div class="hint" style="margin:8px 0 6px">Model: <b>${esc(modelName(d.models.primary))}</b>${["cascade", "rag_cascade", "workflow", "multi_agent"].includes(d.arch) ? ` · small: ${esc(mlabel(d.models.small))}` : ""}</div>
       <div class="tiles t3">
         ${tile("Per month", fmt$(d.monthly), "", chk("cost"))}${tile("Accuracy", pct(d.accuracy), "", chk("accuracy"))}${tile("95% within", dur(d.p95_ms), "", chk("latency"))}
@@ -353,10 +358,41 @@ function renderArchitectures() {
       <div class="k" style="margin-top:10px">${i === 0 ? "Why this one" : "Trade-off vs architecture 1"}</div>
       <div class="chips">${lines.map((l) => `<span class="chip2">${esc(l)}</span>`).join("")}</div>
       ${i === 0 ? "" : `<p class="pick-if"><b>Choose it if</b> ${esc(d.pick_if)}</p>`}
+      ${d.harness ? `<p class="hsum">🛡 Harness: ${d.harness.controls.length} controls · ${fmt$(d.harness.monthly)}/mo${d.harness.ms >= 1 ? ` · +${dur(d.harness.ms)}` : ""} <span class="hint">(included above, estimate)</span></p>` : ""}
       <div class="addons"><span class="ev ${EV[d.evidence][1]}" data-tip="${esc(EV[d.evidence][2])}">${EV[d.evidence][0]}</span>
         ${d.sources && d.sources.length ? `<span class="hint">· ${d.sources.map((s) => `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title.split(" — ")[0])}</a>`).join(", ")}</span>` : ""}</div>
     </article>`;
   }).join("");
+}
+
+function chainHtml(d) {
+  const nodes = (xs) => xs.map((x) => `<span class="node ${/LLM/.test(x) ? "llm" : ""}">${esc(x)}</span>`).join('<span class="arrow">→</span>');
+  if (!d.harness) return `<div class="chain">${nodes(d.flow)}</div>`;
+  const has = (id) => d.harness.controls.some((c) => c.id === id);
+  const before = has("input_guard") ? [`<span class="node guard">Input guardrail</span>`] : [];
+  const after = [has("grounding") ? "Grounding check" : null, has("output_check") ? "Output check" : null].filter(Boolean)
+    .map((x) => `<span class="node guard">${x}</span>`);
+  const arrow = '<span class="arrow">→</span>';
+  return `<div class="hframe"><div class="hlabel">🛡 Production harness · ${d.harness.controls.length} controls</div>
+    <div class="chain">${[...before, nodes(d.flow), ...after].join(arrow)}</div></div>`;
+}
+function renderHarness() {
+  const h = ADV.harness || {}, d = ADV.top[0];
+  const note = !h.on && h.recommended
+    ? `⚠ <b>These are prototype numbers.</b> This agent should run with a production harness because ${h.reasons.length > 1 ? h.reasons.slice(0, -1).join(", ") + " and " + h.reasons.at(-1) : h.reasons[0]}. Tick <b>Production harness</b> and re-run to see what it costs.`
+    : !h.on ? `These numbers are for the architecture alone. Tick <b>Production harness</b> and re-run to include guardrails, evaluation and failover.` : "";
+  $("#hnote").classList.toggle("hidden", !note); $("#hnote").innerHTML = note;
+  const box = $("#harnessBox");
+  if (!d || !d.harness) { $("#harnessShort").textContent = "· off"; box.innerHTML = `<p class="hint">Not included in this run. Tick <b>Production harness</b> next to the goal and re-run.</p>`; return; }
+  const hz = d.harness;
+  $("#harnessShort").textContent = `· ${hz.controls.length} controls · ${fmt$(hz.monthly)}/month`;
+  const layers = [...new Set(hz.controls.map((c) => c.layer_name))];
+  box.innerHTML = `<p class="hint" style="margin:0 0 8px">Controls that call a model are priced from this run's measured results; the others add no model cost. The regression suite costs ${hz.per_release >= 0.01 ? `about <b>${fmt$(hz.per_release)}</b>` : "under a cent"} each time it runs before a release. These figures are estimates and are included in every cost above.</p>
+    <div class="tablewrap"><table class="htable"><thead><tr><th>Control</th><th>What it does</th><th class="num">Per month</th><th class="num">Added wait</th><th>How it's worked out</th></tr></thead><tbody>
+    ${layers.map((l) => `<tr class="layer"><td colspan="5">${esc(l)}</td></tr>` + hz.controls.filter((c) => c.layer_name === l).map((c) => `<tr>
+      <td><b>${esc(c.name)}</b><div class="hint">${c.sources.map((x) => `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title.split(" — ")[0])}</a>`).join(", ")}</div></td>
+      <td>${esc(c.what)}</td><td class="num">${c.monthly ? fmt$(c.monthly) : "—"}</td><td class="num">${c.ms >= 1 ? dur(c.ms) : "—"}</td><td class="hint">${esc(c.basis)}</td></tr>`).join("")).join("")}
+    </tbody></table></div>`;
 }
 
 function renderPlatforms() {
@@ -418,6 +454,7 @@ function renderDetails() {
   fillAdjust();
   const d = ADV.top[0];
   $("#build").innerHTML = `<ol class="steps-ol">${(BUILD[d.arch] || []).map((x) => `<li>${esc(x)}</li>`).join("")}${d.addons.map((a) => `<li>Add <b>${esc(a.name)}</b>: ${esc(a.why)}.</li>`).join("")}
+    ${d.harness ? d.harness.controls.map((c) => `<li>Harness: <b>${esc(c.name)}</b> — ${esc(c.what)}</li>`).join("") : ""}
     <li>Configure <b>${esc(modelName(ADV.models.fallback))}</b> as the fallback in the AI Gateway.</li></ol>
     ${d.components ? `<p class="hint">Components: ${d.components.map(esc).join(" · ")}</p>` : ""}`;
   $("#ruled").innerHTML = Object.entries(ADV.not_applicable).map(([k, why]) => `<li><b>${esc(KNAME[k] || k)}</b>: ${esc(why)}.</li>`).join("");
@@ -469,6 +506,7 @@ function downloadADR() {
 - **Fallback:** ${p.fallback ? `${modelName(p.fallback)} — ${fmt$(fb.monthly)}/month, ${pct(fb.accuracy)} accurate` : "none qualified"}
 - **Architecture:** ${a.name} (${a.flow.join(" → ")})
 - **Evidence:** ${st[0]} — ${st[2]}
+- **Production harness:** ${a.harness ? `included — ${a.harness.controls.length} controls, ${fmt$(a.harness.monthly)}/month (estimate)` : "not included (prototype numbers)"}
 
 ## Context
 ${TASK[s.task_type]}${s.labels.length ? ` (${s.labels.join(", ")})` : ""} · ${LAT[s.latency]} · ${s.requests_per_day.toLocaleString()}/day · target ${pct(s.accuracy_target)} · risk ${s.risk}${s.handles_personal_data ? " · personal data" : ""}
@@ -492,7 +530,14 @@ ${ADV.model_table.map(mrow).join("\n")}
 ${(BUILD[a.arch] || []).map((x) => `1. ${x}`).join("\n")}
 ${a.addons.map((x) => `1. Add ${x.name}: ${x.why}.`).join("\n")}
 
-## Best-practice references
+${a.harness ? `## Production harness
+| Control | Layer | What it does | Per month | How it's worked out |
+|---|---|---|---|---|
+${a.harness.controls.map((c) => `| ${c.name} | ${c.layer_name} | ${c.what} | ${c.monthly ? fmt$(c.monthly) : "—"} | ${c.basis} |`).join("\n")}
+
+Regression suite: about ${fmt$(a.harness.per_release)} per release run.
+
+` : ""}## Best-practice references
 ${(a.sources || []).map((x) => `- [${x.title}](${x.url})`).join("\n")}
 `;
   const el = document.createElement("a");
