@@ -583,7 +583,7 @@ function renderVerdict(rows) {
       : `Accuracy spreads ${fmtPct(lo)}–${fmtPct(hi)}. Differences come from Jev picking the wrong option, routing easy prompts to a smaller model, semantic-cache matches, or failed calls. Check the drill-down.`);
   }
   const cheap = best(rows, "perReq", -1);
-  if (cheap && d && cheap.id !== "direct") pts.push(`<b>${esc(cheap.path.name)}</b> is ${Math.round((1 - cheap.perReq / d.perReq) * 100)}% cheaper than calling direct (${fmt$(cheap.monthlyTokens + cheap.monthlyInfra)} vs ${fmt$(d.monthlyTokens + d.monthlyInfra)} a month).`);
+  if (cheap && d && cheap.id !== "direct") pts.push(`<b>${esc(cheap.path.name)}</b> is ${(1 - cheap.perReq / d.perReq) >= 0.995 ? "over 99%" : Math.round((1 - cheap.perReq / d.perReq) * 100) + "%"} cheaper than calling direct (${fmt$(cheap.monthlyTokens + cheap.monthlyInfra)} vs ${fmt$(d.monthlyTokens + d.monthlyInfra)} a month).`);
   if (rows.some((r) => r.piiSent)) pts.push(`Routes without a guardrail layer (${rows.filter((r) => r.piiSent).map((r) => esc(r.path.name)).join(", ")}) sent a raw email address and card number to the provider.`);
   if (by.jev && by.jev.accuracy != null) {
     const jl = by.jev_llm;
@@ -592,7 +592,7 @@ function renderVerdict(rows) {
   }
   if (by.jev && by.jev.calGap != null && d && d.calGap != null) pts.push(`Confidence you can act on: Jev's calibration gap is ${Math.round(by.jev.calGap)} pts vs ${Math.round(d.calGap)} pts for the LLM's self-rated confidence.`);
   const fo = rows.filter((r) => r.failovers > 0);
-  if (RUN.body.fault_rate) pts.push(`With 20% provider outages, success was ${rows.map((r) => `${esc(r.path.name)} ${fmtPct(r.success)}`).join(", ")}${fo.length ? " — gateway routes recovered by failing over to another provider" : ""}.`);
+  if (RUN.body.fault_rate) pts.push(`With 20% provider outages, success was ${rows.map((r) => `${esc(r.path.name)} ${fmtPct(r.success)}`).join(", ")}${fo.length ? ". Gateway routes recovered by failing over to another provider; Jev answers don't depend on the LLM provider" : ""}.`);
   $("#verdict").innerHTML = `<p>With your weights, <b>${esc(top.path.name)}</b> (${esc(top.path.short)}) ranks first at <b>${Math.round(top.score)}/100</b>.
     ${top.caps >= 7 ? "It also gives every app the shared guardrails, metering and failover a company-wide enablement platform needs." : "Note it gives apps little shared governance — each team would rebuild keys, guardrails and metering."}</p><ul>${pts.map((p) => `<li>${p}</li>`).join("")}</ul>`;
 }
