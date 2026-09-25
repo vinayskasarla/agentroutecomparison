@@ -37,22 +37,30 @@ Pick a model from a dropdown: GPT (OpenAI), Claude (Anthropic), Grok (xAI) or Ge
 
 ## Three pages
 
-- **Architecture advisor** (`/`): for a team planning an agent. Describe the task, set hard requirements
-  (accuracy, hallucination rate, 95th-percentile latency, monthly budget, traffic, repeat rate, personal data,
-  memory/tools, failover) and give test cases with expected answers. Starter packs cover ticket routing,
-  answering from documents, field extraction and a general assistant. Every candidate pattern runs on your
-  cases. The page then recommends the cheapest pattern that meets every requirement, or the closest one and
-  what to change. The evidence includes 95% confidence intervals and is labelled *measured*, *projected* or
-  *capability*. There's also an accuracy-vs-cost chart, build steps, a "why not the others" list and a
-  downloadable decision record (ADR, Markdown).
-  - **Hallucination** means a wrong answer given as if it were right: a made-up answer to a question whose
-    expected answer is `unknown`, an answer outside the allowed labels, or a wrong answer stated with at
-    least 70% confidence.
-  - **Evidence strength** is *weak* under 15 graded cases, *moderate* at 15–39 and *strong* at 40 or more.
-    It is always *indicative* when model calls are simulated.
+- **Architecture advisor** (`/`): the tool's main page, which acts as an AI architect. You describe the agent
+  in plain English and it does four things:
+  1. **Understands the goal.** It works out the task type, fixed labels, whether it needs your documents
+     (and how big they are), tools, memory or several steps, plus personal data, risk, latency, volume and
+     repeat rate. It also writes 12–16 test cases with gradable expected answers. This is done by Claude
+     (`ARCHITECT_MODEL`, default `claude-opus-5`, using structured JSON output) when `ANTHROPIC_API_KEY` is
+     set; otherwise built-in rules use sample cases from a similar task.
+  2. **Tests every model** on those cases (plus Jev when there are fixed labels). It picks a **primary model**
+     (the cheapest that meets the accuracy and hallucination targets), a **fallback model** from a different
+     provider, and a **small model** for light steps.
+  3. **Builds candidate architectures** from the patterns that fit the task: single call, small-to-large
+     cascade, decision model (Jev) with LLM fallback, whole documents in the prompt, RAG, fixed workflow,
+     tool-using agent, orchestrator with specialist agents, and batch pipeline. Add-ons are layered on as
+     needed: AI Gateway, Agent Runtime, response cache, human review and a grounding check.
+  4. **Ranks the designs and shows the top 3.** Designs that meet every requirement rank first, then by
+     accuracy, cost, latency and simplicity; latency doesn't count for background jobs. The page explains
+     why #1 won, the trade-offs of #2 and #3 against it, and "pick this if". It also includes the model
+     table, a build plan, the architectures ruled out and why, and a downloadable ADR.
 
-- **Benchmark** (`/benchmark`): runs the graded eval suite, or your own prompt, through every route with replays, and
-  ranks the routes on accuracy, cost, latency, confidence, reliability and governance.
+  Every number is labelled **measured** (single-call results on your cases), **from measurements** (e.g. the
+  cascade replayed per case from measured confidences) or **estimated** (extra agent steps, tool calls and
+  retrieval, which can't be run here without your systems). You can adjust any requirement or test case and
+  re-run.
+
 - **Ask a question** (`/ask`): type one question in plain English. It runs once through each route and
   shows that single request's answer, time per step, cost, confidence, tokens, the model that actually
   answered, and flags for cache hits, Jev decisions, routing, failover and PII. Asking the same question

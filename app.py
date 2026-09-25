@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import catalog
+import advisor
 from providers import ROUTE_QUESTION, call_jev, call_llm, has_jev_key, has_key, jev_answer_question
 
 app = FastAPI(title="LLM Path Lab")
@@ -477,6 +478,96 @@ async def api_run(req: RunReq):
     return StreamingResponse(stream(), media_type="application/x-ndjson")
 
 
+class AdviseReq(BaseModel):
+    goal: str = ""
+    spec: dict | None = None  # an edited spec from the page; skips the understanding step
+    force_sim: bool = False
+
+
+@app.post("/api/advise")
+async def api_advise(req: AdviseReq):
+    """Understand the goal, write test cases, test the models on them, and rank architectures."""
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def work():
+        await queue.put({"type": "stage", "stage": "understand"})
+        note = None
+        if req.spec:
+            spec, source = req.spec, "edited"
+        elif advisor.claude_available() and not req.force_sim:
+            try:
+                spec, source = await advisor.spec_from_claude(req.goal), "claude"
+            except Exception as exc:  # fall back to rules rather than failing the page
+                spec, source = advisor.spec_from_rules(req.goal), "rules"
+                note = f"The Claude architect failed ({type(exc).__name__}: {str(exc)[:160]}); used built-in rules instead."
+        else:
+            spec, source = advisor.spec_from_rules(req.goal), "rules"
+        spec = advisor.finalize_spec(spec)
+        items = normalize_items(advisor.items_for(spec))
+        await queue.put({"type": "spec", "spec": spec, "source": source, "note": note,
+                         "architect_model": advisor.ARCHITECT_MODEL if source == "claude" else None})
+
+        live_providers = [p for p in catalog.PROVIDERS if has_key(p)] if not req.force_sim else []
+        models = [m["id"] for m in catalog.MODELS if not live_providers or m["provider"] in live_providers]
+        use_jev = bool(spec["labels"]) and all(i.get("options") and i.get("accept") for i in items)
+        total = len(items) * (len(models) + (1 if use_jev else 0))
+        await queue.put({"type": "stage", "stage": "test", "models": models, "cases": len(items), "total": total,
+                         "live": bool(live_providers), "jev": use_jev, "jev_live": has_jev_key() and not req.force_sim})
+        sem, done = asyncio.Semaphore(8), [0]
+
+        async def one_llm(model, item):
+            async with sem:
+                r = await call_llm(model, item["q"], item=item if item.get("accept") else None, force_sim=req.force_sim)
+            correct = grade(r["answer"], item["accept"]) if item.get("accept") and not r["error"] else (
+                False if item.get("accept") else None)
+            done[0] += 1
+            await queue.put({"type": "progress", "done": done[0], "total": total})
+            return {"answer": r["answer"], "confidence": r["confidence"], "correct": correct,
+                    "hallucinated": hallucinated(item, r["answer"], r["confidence"], correct) if not r["error"] else False,
+                    "in_tokens": r["in_tokens"], "out_tokens": r["out_tokens"], "latency_ms": r["llm_ms"],
+                    "error": r["error"], "simulated": r["simulated"]}
+
+        async def one_jev(item):
+            async with sem:
+                j = await call_jev(item["q"], jev_answer_question(item["options"]), truth={"answer": item["sim_right"]},
+                                   difficulty=item["difficulty"], force_sim=req.force_sim)
+            done[0] += 1
+            await queue.put({"type": "progress", "done": done[0], "total": total})
+            if j["error"]:
+                return {"answer": "", "confidence": None, "correct": False, "hallucinated": False, "in_tokens": 0,
+                        "latency_ms": j["jev_ms"], "error": j["error"]}
+            a = j["answers"]["answer"]
+            correct = grade(a["choice"], item["accept"])
+            return {"answer": a["choice"], "confidence": a["confidence"] * 100, "correct": correct,
+                    "hallucinated": hallucinated(item, a["choice"], a["confidence"] * 100, correct),
+                    "in_tokens": j["in_tokens"], "latency_ms": j["jev_ms"], "error": None, "simulated": j["simulated"]}
+
+        per_model = await asyncio.gather(*[asyncio.gather(*[one_llm(m, it) for it in items]) for m in models])
+        res = dict(zip(models, per_model))
+        jev = list(await asyncio.gather(*[one_jev(it) for it in items])) if use_jev else None
+        await queue.put({"type": "stage", "stage": "rank"})
+        result = advisor.rank_designs(spec, res, jev)
+        await queue.put({"type": "advice", **result, "evaluated_models": models,
+                         "simulated": any(r["simulated"] for rs in res.values() for r in rs),
+                         "cases": [{"input": c["input"], "expected": c["expected"]} for c in spec["test_cases"]],
+                         "per_case": {m: [{k: r[k] for k in ("answer", "correct", "hallucinated", "latency_ms")} for r in rs]
+                                      for m, rs in res.items()},
+                         "jev_per_case": [{k: r[k] for k in ("answer", "correct", "confidence")} for r in jev] if jev else None})
+
+    async def stream():
+        task = asyncio.create_task(work())
+        while not (task.done() and queue.empty()):
+            try:
+                yield json.dumps(await asyncio.wait_for(queue.get(), 0.2)) + "\n"
+            except asyncio.TimeoutError:
+                continue
+        if task.exception():
+            yield json.dumps({"type": "error", "error": f"{type(task.exception()).__name__}: {task.exception()}"}) + "\n"
+        yield json.dumps({"type": "done"}) + "\n"
+
+    return StreamingResponse(stream(), media_type="application/x-ndjson")
+
+
 @app.get("/api/config")
 async def api_config():
     return {
@@ -485,6 +576,7 @@ async def api_config():
         "assumptions": catalog.DEFAULT_ASSUMPTIONS, "suite_size": len(catalog.SUITE),
         "keys": {p: has_key(p) for p in catalog.PROVIDERS}, "cache_backend": await cache_backend(),
         "jev": {**catalog.JEV, "has_key": has_jev_key()}, "options": catalog.OPTIONS,
+        "architect": {"claude": advisor.claude_available(), "model": advisor.ARCHITECT_MODEL},
     }
 
 
