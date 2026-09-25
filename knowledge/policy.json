@@ -4,16 +4,89 @@
   "reviewed_on": "2026-09-25",
   "note": "Only models on approved platforms are tested, recommended or callable. Test cases are never sent to an unapproved vendor. Edit this file (or point POLICY_FILE at another) to change the policy; the server enforces it on every call.",
   "approved_platforms": [
-    {"platform": "OpenAI API", "vendor": "OpenAI"},
-    {"platform": "Anthropic API", "vendor": "Anthropic (Claude)"},
-    {"platform": "xAI API", "vendor": "xAI (Grok)"},
-    {"platform": "Gemini API", "vendor": "Google (Gemini)"},
-    {"platform": "Amazon Bedrock", "vendor": "AWS Bedrock"},
-    {"platform": "Azure AI Foundry", "vendor": "Microsoft Azure"}
+    {
+      "platform": "OpenAI API",
+      "vendor": "OpenAI"
+    },
+    {
+      "platform": "Anthropic API",
+      "vendor": "Anthropic (Claude)"
+    },
+    {
+      "platform": "xAI API",
+      "vendor": "xAI (Grok)"
+    },
+    {
+      "platform": "Gemini API",
+      "vendor": "Google (Gemini)"
+    },
+    {
+      "platform": "Amazon Bedrock",
+      "vendor": "AWS Bedrock"
+    },
+    {
+      "platform": "Azure AI Foundry",
+      "vendor": "Microsoft Azure"
+    }
   ],
   "blocked_makers": [],
   "approved_services": [],
   "services": {
-    "jev": {"name": "Jev (TypeSafe)", "why_it_matters": "Needed for the decision-model pattern and the Jev router."}
+    "jev": {
+      "name": "Jev (TypeSafe)",
+      "why_it_matters": "Needed for the decision-model pattern and the Jev router."
+    }
+  },
+  "data_rules_note": "Which platforms may process each class of data, and in which regions each platform can keep processing. These are EXAMPLE defaults: your security team owns them, and regions must be confirmed against each vendor contract.",
+  "data_classes": {
+    "public": {
+      "label": "Public",
+      "platforms": "all"
+    },
+    "internal": {
+      "label": "Internal",
+      "platforms": "all"
+    },
+    "confidential": {
+      "label": "Confidential (customer or employee personal data)",
+      "platforms": [
+        "Amazon Bedrock",
+        "Azure AI Foundry",
+        "Anthropic API",
+        "OpenAI API"
+      ]
+    },
+    "regulated": {
+      "label": "Regulated (health, payment card, financial records)",
+      "platforms": [
+        "Amazon Bedrock",
+        "Azure AI Foundry"
+      ]
+    }
+  },
+  "regions": {
+    "Amazon Bedrock": [
+      "US",
+      "EU",
+      "APAC"
+    ],
+    "Azure AI Foundry": [
+      "US",
+      "EU",
+      "APAC"
+    ],
+    "OpenAI API": [
+      "US",
+      "EU"
+    ],
+    "Anthropic API": [
+      "US"
+    ],
+    "Gemini API": [
+      "US"
+    ],
+    "xAI API": [
+      "US"
+    ]
   }
 }

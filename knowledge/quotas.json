@@ -1,0 +1,20 @@
+{
+  "note": "Rate limits differ per account, region and usage tier, so none are assumed. Enter your own (requests and tokens per minute) to have the advisor check peak load against them. Keys are model ids from models.json.",
+  "limits": {},
+  "where_to_check": {
+    "Amazon Bedrock": "https://console.aws.amazon.com/servicequotas/home/services/bedrock/quotas",
+    "Azure AI Foundry": "https://learn.microsoft.com/azure/ai-foundry/openai/quotas-limits",
+    "OpenAI API": "https://platform.openai.com/settings/organization/limits",
+    "Anthropic API": "https://platform.claude.com/settings/limits",
+    "Gemini API": "https://ai.google.dev/gemini-api/docs/rate-limits",
+    "xAI API": "https://console.x.ai"
+  },
+  "provisioned": {
+    "Amazon Bedrock": "Provisioned Throughput",
+    "Azure AI Foundry": "Provisioned throughput units (PTU)",
+    "OpenAI API": "Scale Tier",
+    "Anthropic API": "Priority Tier",
+    "Gemini API": "Provisioned Throughput (via Vertex AI)",
+    "xAI API": "enterprise capacity agreement"
+  }
+}

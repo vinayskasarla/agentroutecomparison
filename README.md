@@ -168,6 +168,32 @@ The harness cost and latency are added to every figure: the ranking, the winner,
 
 All harness figures are labelled estimates. With the box unticked, the page shows prototype numbers, and it warns when the goal takes actions, carries high risk or handles personal data. The controls and their sources are in `knowledge/harness.json`.
 
+## Beyond accuracy: what else decides the answer
+
+| Question an architect asks | How the advisor handles it | Where to change it |
+|---|---|---|
+| "Those aren't my test cases." | Upload up to 60 real cases (CSV: `input,expected`) plus a reference document under *Adjust*. Every accuracy figure shows a 95% range. Passes whose range dips below the target are marked ≈, and cheaper models that missed only by noise are listed. | page |
+| "Real prompts are much longer." | System prompt + tool definitions, retrieved text, whole documents and chat history are added to every call's tokens, with sensible defaults per task that you can edit. | page (*Adjust*) |
+| "What about prompt caching?" | The static part of the prompt is priced at each platform's cached-input rate when it is over the platform minimum. That covers the system prompt, plus the documents in the whole-documents design. | `knowledge/capabilities.json` |
+| "Can it take the load?" | Shows peak requests and tokens per minute (busiest hour × model calls per request). It is checked against your quotas if you enter them, and each platform's quota page and provisioned option are named. | `knowledge/quotas.json` |
+| "Can this data go there?" | *Data class* and *region* rule models out before testing. Models that can't call tools, or can't read images the goal needs, are ruled out too. | `policy.json` (`data_classes`, `regions`) |
+| "We already run a gateway / vector store." | Reused at no extra cost. A platform you have a spend commitment with wins when it is within 15% of the cheapest. | page (*Constraints*) |
+| "What does it really cost?" | Adds fixed infrastructure (e.g. the vector store) and build effort in engineer-weeks, plus first-year cost when you give an engineer-week rate. Ranking uses total monthly cost. | `knowledge/tco.json` |
+| "Will the model still be around?" | Retirement dates from `models.json` (`retires_on`) or retirement notices in the news feed are flagged on the winner, the fallback and the table. | `models.json`, news feed |
+| "How sure are you?" | *Does the answer change?* re-ranks the same measurements under six what-ifs, with no extra model calls. | — |
+
+Capabilities, caching rates, data rules and TCO figures are starting points marked for review. Unconfirmed context windows are left empty and skipped, not guessed.
+
+### Your decision stays with you
+
+Advice is computed on the fly. Nothing about a decision is stored per user, and there is no database.
+- **Decision record:** choosing *Accept* or *Choose differently* (with a reason and who decided) only affects the decision record you download.
+- **Result cache:** finished results stay in server memory for 24 hours (`ADVICE_CACHE_TTL`, up to `ADVICE_CACHE_MAX` = 200 results). The cache is keyed by the question, the constraints and a fingerprint of prices and policy.
+- **Reopening a result:** asking the same thing again, or opening the result link (`?r=…`), is instant. *Run it fresh* bypasses the cache.
+- **What clears it:** a restart or a price or policy change.
+
+The audit trail in CloudWatch still records requests and actions as before.
+
 ## Company AI vendor policy
 
 `knowledge/policy.json`, or the file named by `POLICY_FILE`, lists the approved platforms. Right now those

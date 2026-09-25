@@ -61,9 +61,26 @@
       </ol>
     </div>
     <div class="progress hidden" id="progressWrap" style="margin-top:10px"><div id="bar"></div></div>
+    <details class="cons" id="consBox"><summary>Constraints <span class="hint" id="consShort">· data sensitivity, region, what you already run</span></summary>
+      <div class="reqs" style="margin-top:10px">
+        <div><label for="c_data">Most sensitive data</label><select id="c_data"><option value="">Work it out from the goal</option></select></div>
+        <div><label for="c_region">Must be processed in</label><select id="c_region"><option value="any">Any region</option><option value="US">US</option><option value="EU">EU</option><option value="APAC">APAC</option></select></div>
+        <div><label for="c_commit">Spend commitment with</label><select id="c_commit"><option value="">No commitment</option></select></div>
+        <div><label for="c_rate">Engineer-week cost <span class="hint">(optional)</span></label><div class="unit"><span>$</span><input type="number" id="c_rate" step="500" min="0" placeholder="for build cost"></div></div>
+      </div>
+      <label class="check" style="margin-top:10px"><input type="checkbox" id="c_images"> <span>Inputs include images or scans</span></label>
+      <div class="exrow"><span class="hint">Already running:</span>
+        <label class="check"><input type="checkbox" class="c_ex" value="gateway"> <span>AI gateway</span></label>
+        <label class="check"><input type="checkbox" class="c_ex" value="runtime"> <span>Agent runtime</span></label>
+        <label class="check"><input type="checkbox" class="c_ex" value="cache"> <span>Response cache</span></label>
+        <label class="check"><input type="checkbox" class="c_ex" value="vector_store"> <span>Vector store</span></label>
+      </div>
+      <p class="hint" style="margin:8px 0 0">Models that can't take this data or region, or can't read images, are ruled out before testing. Data rules come from the company policy; things you already run are reused at no extra cost, and a platform you have a commitment with wins when it's within 15% of the cheapest.</p>
+    </details>
   </section>
 
   <section id="results" class="hidden">
+    <div class="cachebar" id="cachebar"></div>
     <div class="confirm hidden" id="confirm"></div>
 
     <!-- 1. The answer: winner + fallback -->
@@ -73,6 +90,11 @@
     <h2 class="sectiontitle" id="archTitle">Top 3 architectures for this agent</h2>
     <div class="hnote hidden" id="hnote"></div>
     <div class="top3" id="top3"></div>
+
+    <section class="card" id="robustCard">
+      <div class="cardhead"><div><h2>Does the answer change?</h2><p class="hint" id="robustHint" style="margin:0"></p></div></div>
+      <ul class="robust" id="robust"></ul>
+    </section>
 
     <!-- 4. Every model -->
     <section class="card">
@@ -85,6 +107,21 @@
       </div>
       <div class="tablewrap"><table id="mtable" class="mtable"></table></div>
       <div class="pager" id="pager"></div>
+    </section>
+
+    <!-- Decision: kept only in the downloaded record -->
+    <section class="card" id="decision">
+      <div class="cardhead"><div><h2>Your decision</h2><p class="hint" style="margin:0">Goes into the decision record you download. Nothing is saved on the server.</p></div></div>
+      <div class="seg" id="decSeg"><button data-v="accept" class="on">Accept the recommendation</button><button data-v="override">Choose differently</button></div>
+      <div id="overrideBox" class="reqs hidden" style="margin-top:10px">
+        <div><label for="d_arch">Architecture</label><select id="d_arch"></select></div>
+        <div><label for="d_model">Model</label><select id="d_model"></select></div>
+      </div>
+      <div class="reqs" style="margin-top:10px">
+        <div style="grid-column:span 2"><label for="d_reason">Reason or notes</label><input type="text" id="d_reason" placeholder="e.g. We standardise on Bedrock; accuracy to be re-checked on 200 real tickets"></div>
+        <div><label for="d_by">Decided by</label><input type="text" id="d_by"></div>
+      </div>
+      <div class="runrow" style="margin-top:10px"><button class="primary" id="adr">⬇ Download decision record</button></div>
     </section>
 
     <!-- Details -->
@@ -111,16 +148,31 @@
             <label class="check"><input type="checkbox" id="a_mem"> <span>Needs memory</span></label>
             <label class="check"><input type="checkbox" id="a_multi"> <span>Several steps or research</span></label>
           </div>
+          <h3 class="h3" style="margin-top:14px">Real prompt size <span class="hint" style="font-weight:400">— test cases are short, production prompts aren't. These drive cost.</span></h3>
+          <div class="reqs">
+            <div><label for="a_sys">System prompt + tool definitions</label><div class="unit"><input type="number" id="a_sys" step="100" min="0"><span>tokens</span></div></div>
+            <div><label for="a_ctx">Retrieved text per request</label><div class="unit"><input type="number" id="a_ctx" step="500" min="0"><span>tokens</span></div></div>
+            <div><label for="a_doc">All documents, if sent whole</label><div class="unit"><input type="number" id="a_doc" step="1000" min="0"><span>tokens</span></div></div>
+            <div><label for="a_hist">Chat history per request</label><div class="unit"><input type="number" id="a_hist" step="500" min="0"><span>tokens</span></div></div>
+            <div><label for="a_out">Answer length</label><div class="unit"><input type="number" id="a_out" step="50" min="0" placeholder="measured"><span>tokens</span></div></div>
+            <div><label for="a_peak">Busiest hour vs average</label><div class="unit"><input type="number" id="a_peak" step="0.5" min="1"><span>×</span></div></div>
+          </div>
+          <label class="check"><input type="checkbox" id="a_cache"> <span>Use prompt caching where the platform offers it (priced per platform)</span></label>
           <div class="field" style="margin-top:12px"><label class="l" for="a_labels">Fixed answers (comma-separated)</label><input type="text" id="a_labels" placeholder="empty for free-text answers"></div>
           <div class="field" style="margin-top:12px"><label class="l">Test cases <span class="hint">(short expected answer; | for alternatives; <code>unknown</code> where it should decline)</span></label>
             <div class="tablewrap"><table class="cases" id="caseTable"></table></div>
-            <button class="ghost" id="addCase" style="margin-top:8px">+ Add test case</button></div>
+            <div class="runrow" style="margin-top:8px"><button class="ghost" id="addCase">+ Add test case</button>
+              <label class="ghost filebtn">⬆ Upload your cases (CSV)<input type="file" id="csv" accept=".csv,text/csv" hidden></label>
+              <span class="hint" id="csvOut">Columns: input, expected. Up to 60 rows. Real cases beat generated ones.</span></div></div>
+          <div class="field" style="margin-top:12px"><label class="l" for="a_ref">Reference document the answers come from <span class="hint">(optional; sent with every test case)</span></label>
+            <textarea id="a_ref" rows="4" class="askbox" style="min-height:0"></textarea></div>
           <div class="runrow"><button class="primary" id="rerun">Re-run</button></div>
         </div>
       </details>
       <details data-d="harness"><summary>Production harness around architecture 1 <span class="hint" id="harnessShort"></span></summary><div id="harnessBox" style="margin-top:10px"></div></details>
       <details data-d="build"><summary>How to build architecture 1</summary><div id="build" style="margin-top:10px"></div></details>
       <details data-d="ruled"><summary>Architectures ruled out for this task</summary><ul class="facts" id="ruled" style="margin-top:10px"></ul></details>
+      <details data-d="excluded"><summary>Models ruled out for this agent <span class="hint" id="exShort"></span></summary><ul class="facts" id="excluded" style="margin-top:10px"></ul></details>
       <details data-d="cases"><summary>Test cases and each model's answers</summary><div class="tablewrap" style="margin-top:10px"><table class="drill" id="cases"></table></div></details>
       <details data-d="method"><summary>How this advice is made</summary>
         <ol class="steps-ol" style="margin-top:10px">
@@ -132,7 +184,6 @@
         </ol>
         <p class="hint">No LLM writes the recommendation. <b>Cost per 1,000 correct answers</b> = cost per request ÷ accuracy × 1,000: the efficiency figure to compare models.</p>
       </details>
-      <div class="runrow" style="margin-top:6px"><button class="ghost" id="adr">⬇ Download decision record</button></div>
     </section>
   </section>
 </main>
@@ -180,6 +231,10 @@ $("#addCase").onclick = () => addCase("", "");
 $("#caseTable").addEventListener("click", (e) => { if (e.target.closest(".rm")) e.target.closest("tr").remove(); });
 $("#rerun").onclick = () => advise({ goal: $("#goal").value.trim(), spec: readAdjust() });
 $("#adr").onclick = downloadADR;
+$("#csv").onchange = (e) => { const f = e.target.files[0]; if (f) f.text().then(loadCsv); e.target.value = ""; };
+seg("#decSeg", (v) => { $("#overrideBox").classList.toggle("hidden", v !== "override"); });
+$("#d_arch").onchange = () => {};
+fetch("/api/me").then((r) => r.json()).then((u) => { if (u && u.signed_in) $("#d_by").value = u.name || u.email || ""; }).catch(() => {});
 $("#kpill").onclick = () => { $("#kpanel").classList.toggle("hidden"); track("knowledge_opened", {}); };
 $("#kclose").onclick = () => $("#kpanel").classList.add("hidden");
 $("#ppill").onclick = () => { $("#ppanel").classList.toggle("hidden"); track("knowledge_opened", { panel: "policy" }); };
@@ -191,7 +246,67 @@ document.querySelectorAll("details[data-d]").forEach((d) => d.addEventListener("
 function track(event, data) { fetch("/api/events", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ event, data }) }).catch(() => {}); }
 
 function loadKnowledge() { return fetch("/api/knowledge").then((r) => r.json()).then((k) => { KNOW = k; renderKnowledge(); }); }
-fetch("/api/config").then((r) => r.json()).then((cfg) => { CFG = cfg; renderPolicy(); return loadKnowledge(); });
+fetch("/api/config").then((r) => r.json()).then((cfg) => { CFG = cfg; renderPolicy(); fillConstraints(); return loadKnowledge(); }).then(reopen);
+
+// ---------------------------------------------------------------- constraints and cached results
+function fillConstraints() {
+  const pol = CFG.policy;
+  $("#c_data").innerHTML = `<option value="">Work it out from the goal</option>` +
+    Object.entries(pol.data_classes || {}).map(([k, v]) => `<option value="${esc(k)}">${esc(v.label)}</option>`).join("");
+  $("#c_commit").innerHTML = `<option value="">No commitment</option>` + pol.approved_platforms.map((p) => `<option>${esc(p.platform)}</option>`).join("");
+}
+function readConstraints() {
+  const c = { residency: $("#c_region").value, existing: [...document.querySelectorAll(".c_ex:checked")].map((x) => x.value) };
+  if ($("#c_data").value) c.data_class = $("#c_data").value;
+  if ($("#c_commit").value) c.commitment = $("#c_commit").value;
+  if ($("#c_rate").value) c.engineer_week_usd = +$("#c_rate").value;
+  if ($("#c_images").checked) c.needs_images = true;
+  return c;
+}
+async function reopen() {
+  const key = new URLSearchParams(location.search).get("r");
+  if (!key) return;
+  const r = await fetch("/api/advice/" + encodeURIComponent(key));
+  if (!r.ok) { $("#cachebar").textContent = ""; alert("That result has expired (results are kept for a day and never saved). Run the advice again."); history.replaceState(null, "", location.pathname); return; }
+  const j = await r.json();
+  SPEC = j.spec; SRC = j; ADV = j.advice; $("#goal").value = SPEC.summary || "";
+  render();
+}
+function ago(t) { const m = Math.round((Date.now() / 1000 - t) / 60); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : `${Math.round(m / 60)} h ago`; }
+function renderCacheBar() {
+  history.replaceState(null, "", location.pathname + "?r=" + ADV.key);
+  $("#cachebar").innerHTML = (ADV.cached_at ? `<span>♻ Reopened from cache — worked out ${ago(ADV.cached_at)} with today's prices and policy.</span><button class="linkbtn" id="fresh">Run it fresh</button>` : "") +
+    `<button class="linkbtn" id="copyLink" data-tip="Anyone with the link can reopen this result for 24 hours. It's kept in memory only, never saved.">🔗 Copy link to this result</button>`;
+  $("#copyLink").onclick = () => navigator.clipboard.writeText(location.href).then(() => ($("#copyLink").textContent = "✓ Link copied"));
+  if ($("#fresh")) $("#fresh").onclick = () => advise(SRC.source === "edited" ? { goal: $("#goal").value.trim(), spec: SPEC, fresh: true } : { goal: $("#goal").value.trim(), fresh: true });
+}
+
+// ---------------------------------------------------------------- CSV test cases
+function parseCsv(text) {
+  const rows = []; let row = [], cell = "", q = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (q) { if (ch === '"' && text[i + 1] === '"') { cell += '"'; i++; } else if (ch === '"') q = false; else cell += ch; }
+    else if (ch === '"') q = true;
+    else if (ch === ",") { row.push(cell); cell = ""; }
+    else if (ch === "\n" || ch === "\r") { if (ch === "\r" && text[i + 1] === "\n") i++; row.push(cell); rows.push(row); row = []; cell = ""; }
+    else cell += ch;
+  }
+  if (cell || row.length) { row.push(cell); rows.push(row); }
+  return rows.filter((r) => r.some((c) => c.trim()));
+}
+function loadCsv(text) {
+  let rows = parseCsv(text);
+  if (!rows.length) return;
+  const head = rows[0].map((h) => h.trim().toLowerCase());
+  let ii = head.indexOf("input"), ei = head.indexOf("expected");
+  if (ii >= 0) rows = rows.slice(1); else { ii = 0; ei = 1; }
+  const cases = rows.map((r) => ({ input: (r[ii] || "").trim(), expected: (r[ei] || "").trim() })).filter((c) => c.input).slice(0, 60);
+  $("#caseTable tbody").innerHTML = "";
+  cases.forEach((c) => addCase(c.input, c.expected));
+  $("#csvOut").textContent = `Loaded ${cases.length} cases${rows.length > 60 ? " (first 60)" : ""}. Press Re-run to test them.`;
+  track("cases_uploaded", { count: cases.length });
+}
 function renderPolicy() {
   const pol = CFG.policy;
   $("#ppill").innerHTML = `<i class="dot" style="background:var(--good)"></i>Policy: ${pol.approved_platforms.length} approved vendors`;
@@ -240,6 +355,7 @@ async function advise(body) {
   if (!body.goal && !body.spec) { $("#goal").focus(); return; }
   body.force_sim = $("#forceSim").checked;
   body.harness = $("#harness").checked;
+  body.constraints = readConstraints();
   $("#go").disabled = $("#rerun").disabled = true;
   $("#stepper").classList.remove("hidden"); $("#progressWrap").classList.remove("hidden"); $("#bar").style.width = "0";
   document.querySelectorAll("#stepper li").forEach((li) => (li.className = ""));
@@ -286,16 +402,39 @@ function render() {
   $("#confirm").classList.toggle("hidden", !conf.length);
   $("#confirm").innerHTML = conf.length ? `<b>Please confirm:</b> ${conf.map((c) => `${esc(c.label)} read as <b>${esc(String(c.architect))}</b> (rules suggest ${esc(String(c.rules))})`).join(" · ")}. <a href="#" id="fixit">Adjust</a>` : "";
   if (conf.length) $("#fixit").onclick = (e) => { e.preventDefault(); document.querySelector('details[data-d="understood"]').open = true; $("#adjust").classList.remove("hidden"); };
-  PAGE = 1; renderHero(); renderArchitectures(); renderPlatforms(); renderTable(); renderDetails(); renderHarness();
+  PAGE = 1; renderCacheBar(); renderHero(); renderArchitectures(); renderRobust(); renderPlatforms(); renderTable(); renderDetails(); renderHarness(); renderDecision();
 }
 
 function tile(k, v, sub, state) {
   return `<div class="tile ${state || ""}"><div class="tk">${k}</div><div class="tv">${v}</div><div class="ts">${sub || "&nbsp;"}</div></div>`;
 }
 function reqChips(d) {
-  const lab = { accuracy: "Accuracy", halluc: "Hallucinations", latency: "Speed", cost: "Budget" };
-  const tgt = (c) => c.key === "latency" ? `95% ≤ ${dur(c.target)}` : c.key === "cost" ? `≤ ${fmt$(c.target)}` : c.key === "halluc" ? `≤ ${pct(c.target)}` : `≥ ${pct(c.target)}`;
-  return d.checks.map((c) => `<span class="req ${c.pass ? "ok" : "bad"}">${c.pass ? "✓" : "✗"} ${lab[c.key]} ${tgt(c)}</span>`).join("");
+  const lab = { accuracy: "Accuracy", halluc: "Hallucinations", latency: "Speed", cost: "Budget", context: "Context", quota: "Peak load" };
+  const tgt = (c) => c.key === "latency" ? `95% ≤ ${dur(c.target)}` : c.key === "cost" ? `≤ ${fmt$(c.target)}` : c.key === "halluc" ? `≤ ${pct(c.target)}`
+    : c.key === "context" ? `${tok(c.value)} of ${tok(c.target)}` : c.key === "quota" ? `≤ ${tok(c.target)} tokens/min` : `≥ ${pct(c.target)}`;
+  return d.checks.map((c) => {
+    const unsure = c.key === "accuracy" && c.pass && !c.sure;
+    return `<span class="req ${c.pass ? "ok" : "bad"} ${unsure ? "unsure" : ""}" ${unsure ? `data-tip="Measured ${pct(c.value)}, but with ${d.n} test cases the true rate could be ${pct(c.lo)}–${pct(c.hi)}. Add real cases to confirm."` : ""}>${c.pass ? (unsure ? "≈" : "✓") : "✗"} ${lab[c.key]} ${tgt(c)}</span>`;
+  }).join("");
+}
+function tok(n) { return n == null ? "—" : n >= 1e6 ? (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M" : n >= 1e3 ? Math.round(n / 1e3) + "k" : String(Math.round(n)); }
+function range(d) { return d.acc_lo == null ? "" : `${Math.round(d.acc_lo * 100)}–${pct(d.acc_hi)}`; }
+function heroFacts(d, p) {
+  const f = [];
+  f.push(`<span class="fact" data-tip="Engineer-weeks for a first production release; planning estimate from knowledge/tco.json">🛠 Build ${d.build_weeks[0]}–${d.build_weeks[1]} eng-weeks${d.build_usd ? ` (~${fmt$(d.build_usd[0])}–${fmt$(d.build_usd[1])})` : ""}</span>`);
+  if (d.infra_monthly) f.push(`<span class="fact" data-tip="${esc(d.infra.map((i) => `${i.name}: ${i.basis}`).join("; "))}">🏗 Fixed infra ${fmt$(d.infra_monthly)}/mo</span>`);
+  f.push(`<span class="fact" data-tip="Busiest minute at ${SPEC.peak_factor}× the average hour, ${d.peak.calls.toFixed(1)} model calls per request. Check your quota${d.peak.check_url ? " at " + d.peak.check_url : ""}; beyond it, consider ${d.peak.provisioned || "provisioned capacity"}.">📈 Peak ${Math.round(d.peak.rpm)} req/min · ${tok(d.peak.tpm)} tokens/min${d.peak.quota ? (d.peak.over.length ? " — over quota" : " — within quota") : ""}</span>`);
+  f.push(`<span class="fact" data-tip="Prompt: ${tok(SPEC.system_prompt_tokens)} system + tools, ${tok(SPEC.context_tokens)} retrieved, ${tok(SPEC.history_tokens)} history. Change it under 'What I understood → Adjust'.">📏 ~${tok(d.tokens_per_call)} tokens per call${d.cached_share >= 0.05 ? ` · ${pct(d.cached_share)} cached` : ""}</span>`);
+  if (p.committed) f.push(`<span class="fact">🤝 On your ${esc(SPEC.commitment)} commitment</span>`);
+  if (p.retirement) f.push(`<span class="fact warnf" data-tip="${esc(p.retirement.title)}">⚠ Retirement notice${p.retirement.date ? " · " + esc(p.retirement.date) : ""}</span>`);
+  return `<div class="facts-row">${f.join("")}</div>`;
+}
+function heroNotes(d, p) {
+  const n = [], acc = d.checks.find((c) => c.key === "accuracy");
+  if (acc && acc.pass && !acc.sure) n.push(`📊 Measured ${pct(d.accuracy)} on ${d.n} test cases, but the true rate could be as low as <b>${pct(d.acc_lo)}</b>. Upload real cases (Adjust → Upload CSV) to confirm it clears ${pct(SPEC.accuracy_target)}.`);
+  if ((p.near_misses || []).length) n.push(`🔎 Cheaper models that missed the accuracy target by a margin within noise: ${p.near_misses.map((x) => `<b>${esc(x.label)}</b> (${pct(x.accuracy)}, ${fmt$(x.monthly)}/mo)`).join(", ")}. More test cases would settle it.`);
+  if (p.fallback_retirement) n.push(`⚠ The fallback has a retirement notice: ${esc(p.fallback_retirement.title)}.`);
+  return n.length ? `<div class="notes">${n.map((x) => `<div>${x}</div>`).join("")}</div>` : "";
 }
 function renderHero() {
   const d = ADV.top[0], p = ADV.models, st = strength(), i = info(p.primary), r = row(p.primary), fbi = p.fallback ? info(p.fallback) : null, fb = p.fallback_design;
@@ -315,12 +454,13 @@ function renderHero() {
         <div class="wmeta">${esc(i.maker || "")} · <b>${esc(i.platform || "")}</b> · $${i.in} / $${i.out} per 1M tokens</div>
         <div class="warch">runs in <b>${esc(d.name)}</b></div>
         <div class="tiles t4">
-          ${tile("Per month", fmt$(d.monthly), `${SPEC.requests_per_day.toLocaleString()} requests/day`, "hi")}
-          ${tile("Accuracy", pct(d.accuracy), `${d.right} of ${d.n} test cases`)}
+          ${tile("Per month", fmt$(d.monthly), d.infra_monthly ? `+ ${fmt$(d.infra_monthly)} fixed infra` : `${SPEC.requests_per_day.toLocaleString()} requests/day`, "hi")}
+          ${tile("Accuracy", pct(d.accuracy), `<span data-tip="${d.right} of ${d.n} test cases correct; 95% range ${range(d)}">${d.right}/${d.n} · likely ${range(d)}</span>`)}
           ${tile("95% within", dur(d.p95_ms), `median ${dur(d.p50_ms)}`)}
           ${tile("Per 1K correct", d.accuracy ? fmt$(d.cost_per_req * 1000 / d.accuracy) : "—", `hallucinations ${pct(d.halluc)}`)}
         </div>
         <p class="whywin">${why}</p>
+        ${heroFacts(d, p)}
       </article>
       <article class="runner">
         <div class="badge-row"><span class="medal alt">↺ Fallback</span>${fbi ? statusBadge(fbi) : ""}</div>
@@ -328,7 +468,7 @@ function renderHero() {
         <div class="wmeta">${esc(fbi.maker)} · <b>${esc(fbi.platform)}</b></div>
         <div class="warch">Takes over if the winner is down or unavailable</div>
         <div class="tiles t2">
-          ${tile("Per month", fmt$(fb.monthly), "")}${tile("Accuracy", pct(fb.accuracy), `${fb.right} of ${fb.n}`)}
+          ${tile("Per month", fmt$(fb.monthly), "")}${tile("Accuracy", pct(fb.accuracy), `${fb.right}/${fb.n} · likely ${range(fb)}`)}
           ${tile("95% within", dur(fb.p95_ms), "")}${tile("Per 1K correct", fb.accuracy ? fmt$(fb.cost_per_req * 1000 / fb.accuracy) : "—", "")}
         </div>` : `<p class="hint">No model on another platform met every requirement.</p>`}
       </article>
@@ -336,6 +476,7 @@ function renderHero() {
     ${d.harness ? `<p class="hsum">🛡 Includes a production harness: <b>${d.harness.controls.length} controls</b>, ${fmt$(d.harness.monthly)}/month${d.harness.ms >= 1 ? `, +${dur(d.harness.ms)} wait` : ", no added wait"} (estimate).</p>` : ""}
     <div class="hero-foot"><div class="reqs-row">${reqChips(d)}</div>
       <div class="ev-row"><span class="strength ${st[1]}">Evidence: ${st[0]}</span><span class="hint">${esc(st[2])}</span></div></div>
+    ${heroNotes(d, p)}
     ${cu ? `<p class="cheaper">💡 <b>${esc(cu.label)}</b> (${esc(cu.platform)}) also met every requirement at ${fmt$(cu.monthly)}/month but its price isn't verified yet — confirm it to make it eligible.</p>` : ""}`;
 }
 
@@ -358,6 +499,7 @@ function renderArchitectures() {
       <div class="k" style="margin-top:10px">${i === 0 ? "Why this one" : "Trade-off vs architecture 1"}</div>
       <div class="chips">${lines.map((l) => `<span class="chip2">${esc(l)}</span>`).join("")}</div>
       ${i === 0 ? "" : `<p class="pick-if"><b>Choose it if</b> ${esc(d.pick_if)}</p>`}
+      <p class="hsum">🛠 Build ${d.build_weeks[0]}–${d.build_weeks[1]} eng-weeks${d.infra_monthly ? ` · infra ${fmt$(d.infra_monthly)}/mo` : ""}${d.build_usd ? ` · first year ~${fmt$(12 * d.total_monthly + (d.build_usd[0] + d.build_usd[1]) / 2)}` : ""} · accuracy range ${range(d)}</p>
       ${d.harness ? `<p class="hsum">🛡 Harness: ${d.harness.controls.length} controls · ${fmt$(d.harness.monthly)}/mo${d.harness.ms >= 1 ? ` · +${dur(d.harness.ms)}` : ""} <span class="hint">(included above, estimate)</span></p>` : ""}
       <div class="addons"><span class="ev ${EV[d.evidence][1]}" data-tip="${esc(EV[d.evidence][2])}">${EV[d.evidence][0]}</span>
         ${d.sources && d.sources.length ? `<span class="hint">· ${d.sources.map((s) => `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title.split(" — ")[0])}</a>`).join(", ")}</span>` : ""}</div>
@@ -395,6 +537,22 @@ function renderHarness() {
     </tbody></table></div>`;
 }
 
+function renderRobust() {
+  const r = ADV.robustness || [];
+  $("#robustCard").classList.toggle("hidden", !r.length);
+  const held = r.filter((x) => x.same_arch && x.same_model).length;
+  $("#robustHint").textContent = `The recommendation holds in ${held} of ${r.length} what-ifs. Re-ranked on the same measurements; no extra model calls.`;
+  $("#robust").innerHTML = r.map((x) => {
+    const same = x.same_arch && x.same_model;
+    const what = same ? "Same recommendation" : x.same_arch ? `Same architecture, but on ${esc(x.model_label)}` : `Switches to <b>${esc(x.arch_name)}</b> on ${esc(x.model_label)}`;
+    return `<li class="${same ? "same" : "changes"}"><div class="rs">${esc(x.scenario)}</div><div>${same ? "✓ " : "↺ "}${what} · ${fmt$(x.monthly)}/mo${x.passes ? "" : ' <span class="no">misses a requirement</span>'}</div></li>`;
+  }).join("");
+}
+function renderDecision() {
+  $("#d_arch").innerHTML = ADV.top.map((d, i) => `<option value="${i}">${i + 1}. ${esc(d.name)}</option>`).join("");
+  $("#d_model").innerHTML = ADV.model_table.filter((r) => r.tested).map((r) => `<option value="${esc(r.id)}">${esc(r.label)} · ${esc(r.platform)} · ${fmt$(r.monthly)}/mo${r.meets ? "" : " (misses)"}</option>`).join("");
+}
+
 function renderPlatforms() {
   const plats = ["All", ...new Set(ADV.model_table.map((r) => r.platform))];
   if (!plats.includes(PLATFORM)) PLATFORM = "All";
@@ -421,10 +579,10 @@ function renderTable() {
     <th class="num">Accuracy</th><th class="num">Halluc.</th><th class="num">95% within</th><th class="num">Per 1K correct</th><th>Per month</th><th>Result</th></tr></thead><tbody>` +
     rows.map((r) => `<tr class="${r.id === p.primary ? "rowp" : r.id === p.fallback ? "rowf" : ""} ${r.tested ? "" : "rowr"}">
       <td class="hint">${ADV.model_table.indexOf(r) + 1}</td>
-      <td><b>${esc(r.label)}</b><div class="hint">${esc(r.maker)} · ${esc(r.platform)}</div></td>
+      <td><b>${esc(r.label)}</b>${r.retirement ? ` <span class="warn" data-tip="${esc(r.retirement.title)}">⚠ retiring</span>` : ""}<div class="hint">${esc(r.maker)} · ${esc(r.platform)}${r.context ? ` · ${tok(r.context)} context` : ""}</div></td>
       <td>$${r.in} / $${r.out}<div>${statusBadge(r)}</div></td>
       <td><span class="modebadge ${r.mode}" data-tip="${esc(r.mode === "estimate" ? `Not tested: cost estimated from ${mlabel(r.estimated_from)}'s token use at this model's price.` : r.live_error ? "Live call failed from this server: " + r.live_error : r.mode === "live" ? "Measured with live API calls." : "Simulated from a model profile.")}">${r.mode}</span></td>
-      <td class="num">${pct(r.accuracy)}</td><td class="num">${pct(r.halluc)}</td><td class="num">${dur(r.p95_ms)}</td>
+      <td class="num" ${r.acc_lo != null ? `data-tip="95% range ${pct(r.acc_lo)}–${pct(r.acc_hi)} on ${ADV.top[0].n} test cases"` : ""}>${pct(r.accuracy)}</td><td class="num">${pct(r.halluc)}</td><td class="num">${dur(r.p95_ms)}</td>
       <td class="num">${r.cost_per_1k_correct == null ? "—" : fmt$(r.cost_per_1k_correct)}</td>
       <td class="costcell"><span class="cbar" style="width:${Math.max(2, 100 * r.monthly / max)}%"></span><b>${r.tested ? "" : "~"}${fmt$(r.monthly)}</b></td>
       <td>${result(r)}</td></tr>`).join("") + "</tbody>";
@@ -446,7 +604,10 @@ function renderDetails() {
   const pills = [["Task", TASK[s.task_type]], s.labels.length ? ["Answers", s.labels.join(" · ")] : null,
     s.needs_documents ? ["Documents", s.document_size] : null, s.needs_tools ? ["Actions", "yes"] : null, s.needs_memory ? ["Memory", "yes"] : null,
     s.multi_step ? ["Steps", "several"] : null, ["Speed", LAT[s.latency]], ["Volume", s.requests_per_day.toLocaleString() + "/day"],
-    ["Repeats", pct(s.repeat_rate)], ["Target", pct(s.accuracy_target)], ["Risk", s.risk], s.handles_personal_data ? ["Personal data", "yes"] : null].filter(Boolean);
+    ["Repeats", pct(s.repeat_rate)], ["Target", pct(s.accuracy_target)], ["Risk", s.risk], s.handles_personal_data ? ["Personal data", "yes"] : null,
+    ["Data", s.data_class], s.residency !== "any" ? ["Region", s.residency] : null, s.needs_images ? ["Images", "yes"] : null,
+    ["Prompt", `${tok(s.system_prompt_tokens + s.context_tokens + s.history_tokens)} tokens`], ["Caching", s.prompt_caching ? "on" : "off"], ["Peak", s.peak_factor + "×"],
+    s.existing.length ? ["Reusing", s.existing.join(", ")] : null, s.commitment ? ["Commitment", s.commitment] : null].filter(Boolean);
   $("#specPills").innerHTML = pills.map(([k, v]) => `<span class="spec"><span>${esc(k)}</span>${esc(v)}</span>`).join("");
   const notes = [...(s.assumptions || [])]; if (SRC.note) notes.unshift(SRC.note);
   $("#assumptions").innerHTML = (SRC.source === "claude" ? `<li>Read and test cases written by ${esc(SRC.architect_model)}.</li>` : SRC.source === "edited" ? "<li>Your adjusted settings.</li>" : "") +
@@ -457,6 +618,10 @@ function renderDetails() {
     ${d.harness ? d.harness.controls.map((c) => `<li>Harness: <b>${esc(c.name)}</b> — ${esc(c.what)}</li>`).join("") : ""}
     <li>Configure <b>${esc(modelName(ADV.models.fallback))}</b> as the fallback in the AI Gateway.</li></ol>
     ${d.components ? `<p class="hint">Components: ${d.components.map(esc).join(" · ")}</p>` : ""}`;
+  const ex = ADV.excluded_models || [];
+  $("#exShort").textContent = `· ${ex.length}`;
+  const byWhy = {}; ex.forEach((e) => (byWhy[e.reason] = (byWhy[e.reason] || []).concat(e.label)));
+  $("#excluded").innerHTML = Object.entries(byWhy).map(([w, ls]) => `<li><b>${esc(w)}</b>: ${esc(ls.join(", "))}</li>`).join("") || "<li>None — every approved model could take this job.</li>";
   $("#ruled").innerHTML = Object.entries(ADV.not_applicable).map(([k, why]) => `<li><b>${esc(KNAME[k] || k)}</b>: ${esc(why)}.</li>`).join("");
   const ids = Object.keys(ADV.per_case), cols = ids.map((m) => [modelName(m), ADV.per_case[m]]).concat(ADV.jev_per_case ? [["Jev", ADV.jev_per_case]] : []);
   $("#cases").innerHTML = `<thead><tr><th>Test case</th><th>Expected</th>${cols.map(([n]) => `<th class="rot">${esc(n)}</th>`).join("")}</tr></thead><tbody>` +
@@ -475,6 +640,9 @@ function fillAdjust() {
   $("#a_pii").checked = s.handles_personal_data; $("#a_docs").checked = s.needs_documents; $("#a_tools").checked = s.needs_tools;
   $("#a_mem").checked = s.needs_memory; $("#a_multi").checked = s.multi_step; $("#a_large").checked = s.document_size === "large";
   $("#a_labels").value = s.labels.join(", ");
+  $("#a_sys").value = s.system_prompt_tokens; $("#a_ctx").value = s.context_tokens; $("#a_doc").value = s.document_tokens;
+  $("#a_hist").value = s.history_tokens; $("#a_out").value = s.output_tokens || ""; $("#a_peak").value = s.peak_factor;
+  $("#a_cache").checked = s.prompt_caching; $("#a_ref").value = s.reference_material || "";
   $("#caseTable").innerHTML = "<thead><tr><th>Input</th><th>Expected</th><th></th></tr></thead><tbody></tbody>";
   s.test_cases.forEach((c) => addCase(c.input, c.expected));
 }
@@ -490,6 +658,9 @@ function readAdjust() {
     risk: $("#a_risk").value, handles_personal_data: $("#a_pii").checked, needs_documents: docs, needs_tools: $("#a_tools").checked,
     needs_memory: $("#a_mem").checked, multi_step: $("#a_multi").checked, document_size: docs ? ($("#a_large").checked ? "large" : "small") : "none",
     labels: $("#a_labels").value.split(",").map((x) => x.trim()).filter(Boolean),
+    system_prompt_tokens: +$("#a_sys").value, context_tokens: +$("#a_ctx").value, document_tokens: +$("#a_doc").value,
+    history_tokens: +$("#a_hist").value, output_tokens: $("#a_out").value ? +$("#a_out").value : null, peak_factor: +$("#a_peak").value || 3,
+    prompt_caching: $("#a_cache").checked, reference_material: $("#a_ref").value.trim(),
     test_cases: [...document.querySelectorAll("#caseTable tbody tr")].map((tr) => ({ input: tr.querySelector(".ci").value.trim(), expected: tr.querySelector(".ce").value.trim() })).filter((c) => c.input),
     assumptions: [] };
 }
@@ -499,17 +670,31 @@ function downloadADR() {
   const a = ADV.top[0], s = SPEC, p = ADV.models, st = strength(), today = new Date().toISOString().slice(0, 10), fb = p.fallback_design;
   const arow = (d, i) => `| ${i + 1} | ${d.name} | ${modelName(d.models.primary)} | ${pct(d.accuracy)} | ${dur(d.p95_ms)} | ${fmt$(d.monthly)} | ${EV[d.evidence][0]} |`;
   const mrow = (r, i) => `| ${i + 1} | ${r.label} | ${r.platform} | $${r.in} / $${r.out} (${r.status}) | ${r.mode} | ${pct(r.accuracy)} | ${pct(r.halluc)} | ${r.tested ? "" : "~"}${fmt$(r.monthly)} | ${r.id === p.primary ? "Best model" : r.id === p.fallback ? "Fallback" : r.meets ? "meets all" : r.tested ? "misses" : "not tested"} |`;
+  const over = document.querySelector("#decSeg .on").dataset.v === "override";
+  const oArch = over ? ADV.top[+$("#d_arch").value] : null, oModel = over ? $("#d_model").value : null;
+  const decision = over ? `Chose **${oArch.name}** on **${modelName(oModel)}** instead of the recommendation (${a.name} on ${modelName(p.primary)}).`
+    : `Accepted the recommendation: **${a.name}** on **${modelName(p.primary)}**.`;
+  const reason = $("#d_reason").value.trim(), by = $("#d_by").value.trim();
+  const rob = ADV.robustness || [];
   const md = `# ADR: ${s.summary}
 
-- **Date:** ${today} · **Status:** Proposed
+- **Date:** ${today} · **Status:** ${over ? "Decided (differs from recommendation)" : "Decided"}${by ? ` · **Decided by:** ${by}` : ""}
+- **Decision:** ${decision}${reason ? `\n- **Reason:** ${reason}` : ""}
 - **Best model:** ${modelName(p.primary)} — ${fmt$(a.monthly)}/month, ${pct(a.accuracy)} accurate, hallucinations ${pct(a.halluc)}, 95% within ${dur(a.p95_ms)}
 - **Fallback:** ${p.fallback ? `${modelName(p.fallback)} — ${fmt$(fb.monthly)}/month, ${pct(fb.accuracy)} accurate` : "none qualified"}
 - **Architecture:** ${a.name} (${a.flow.join(" → ")})
-- **Evidence:** ${st[0]} — ${st[2]}
-- **Production harness:** ${a.harness ? `included — ${a.harness.controls.length} controls, ${fmt$(a.harness.monthly)}/month (estimate)` : "not included (prototype numbers)"}
+- **Evidence:** ${st[0]} — ${st[2]} Accuracy 95% range ${pct(a.acc_lo)}–${pct(a.acc_hi)} on ${a.n} cases.
+- **Total cost:** ${fmt$(a.monthly)}/month usage${a.infra_monthly ? ` + ${fmt$(a.infra_monthly)}/month fixed infrastructure` : ""} · build ${a.build_weeks[0]}–${a.build_weeks[1]} engineer-weeks${a.build_usd ? ` (~${fmt$(a.build_usd[0])}–${fmt$(a.build_usd[1])})` : ""}
+- **Peak load:** ${Math.round(a.peak.rpm)} requests/min, ${tok(a.peak.tpm)} tokens/min at ${s.peak_factor}× the average hour${a.peak.quota ? (a.peak.over.length ? " — OVER the entered quota" : " — within the entered quota") : ` — check quota: ${a.peak.check_url || "provider console"}`}
+${p.retirement ? `- **Retirement notice:** ${p.retirement.title}\n` : ""}- **Production harness:** ${a.harness ? `included — ${a.harness.controls.length} controls, ${fmt$(a.harness.monthly)}/month (estimate)` : "not included (prototype numbers)"}
 
 ## Context
 ${TASK[s.task_type]}${s.labels.length ? ` (${s.labels.join(", ")})` : ""} · ${LAT[s.latency]} · ${s.requests_per_day.toLocaleString()}/day · target ${pct(s.accuracy_target)} · risk ${s.risk}${s.handles_personal_data ? " · personal data" : ""}
+
+## Constraints and assumptions
+- Data class: ${s.data_class} · region: ${s.residency} · images: ${s.needs_images ? "yes" : "no"}${s.commitment ? ` · commitment: ${s.commitment}` : ""}${s.existing.length ? ` · reusing: ${s.existing.join(", ")}` : ""}
+- Prompt per request: ${s.system_prompt_tokens} system + tools, ${s.context_tokens} retrieved, ${s.document_tokens} whole documents (long-context option), ${s.history_tokens} history · prompt caching ${s.prompt_caching ? "on" : "off"}
+- Models ruled out: ${(ADV.excluded_models || []).map((e) => `${e.label} (${e.reason})`).join("; ") || "none"}
 
 ## Top 3 architectures
 | # | Architecture | Model | Accuracy | 95% within | Per month | Evidence |
@@ -520,6 +705,9 @@ ${ADV.top.map(arow).join("\n")}
 ${a.why.map((w) => `- ${w}`).join("\n")}
 
 ${ADV.top.slice(1).map((d, i) => `### Architecture ${i + 2}: ${d.name}\n- Trade-off vs architecture 1: ${d.tradeoffs.join("; ")}\n- Choose it if ${d.pick_if}`).join("\n\n")}
+
+## Does the answer change?
+${rob.map((x) => `- ${x.scenario}: ${x.same_arch && x.same_model ? "same recommendation" : `${x.arch_name} on ${x.model_label}`} (${fmt$(x.monthly)}/month)`).join("\n")}
 
 ## Every model, priced in architecture 1 (cheapest first)
 | # | Model | Platform | Price per 1M | Measured | Accuracy | Halluc. | Per month | Result |
@@ -544,7 +732,7 @@ ${(a.sources || []).map((x) => `- [${x.title}](${x.url})`).join("\n")}
   el.href = URL.createObjectURL(new Blob([md], { type: "text/markdown" }));
   el.download = `ADR-${s.summary.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40)}.md`;
   el.click(); URL.revokeObjectURL(el.href);
-  track("adr_downloaded", { architecture: a.arch, model: p.primary, fallback: p.fallback });
+  track("adr_downloaded", { architecture: a.arch, model: p.primary, fallback: p.fallback, overridden: over });
 }
 </script>
 </body>

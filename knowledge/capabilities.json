@@ -1,0 +1,43 @@
+{
+  "reviewed_on": "2026-09-25",
+  "status": "needs_review",
+  "note": "Context windows and features from each vendor's model pages. A null context means it hasn't been confirmed for this model, so the context check is skipped and flagged rather than guessed. Confirm before relying on a hard limit.",
+  "defaults": {"tools": true, "structured": true, "vision": false, "context": null},
+  "models": {
+    "claude-fable-5-1": {"vision": true, "source": "https://platform.claude.com/docs/en/about-claude/models/overview"},
+    "claude-opus-5-5": {"vision": true, "source": "https://platform.claude.com/docs/en/about-claude/models/overview"},
+    "claude-sonnet-5": {"vision": true, "source": "https://platform.claude.com/docs/en/about-claude/models/overview"},
+    "claude-haiku-4-5": {"context": 200000, "vision": true, "source": "https://platform.claude.com/docs/en/about-claude/models/overview"},
+    "gpt-5": {"context": 400000, "vision": true, "source": "https://platform.openai.com/docs/models/gpt-5"},
+    "gpt-5-mini": {"context": 400000, "vision": true, "source": "https://platform.openai.com/docs/models/gpt-5-mini"},
+    "gemini-2.5-pro": {"context": 1048576, "vision": true, "source": "https://ai.google.dev/gemini-api/docs/models"},
+    "gemini-2.5-flash": {"context": 1048576, "vision": true, "source": "https://ai.google.dev/gemini-api/docs/models"},
+    "grok-4": {"context": 256000, "vision": true, "source": "https://docs.x.ai/docs/models"},
+    "grok-4-fast": {"context": 2000000, "vision": true, "source": "https://docs.x.ai/docs/models"},
+    "bedrock-nova-2-pro": {"vision": true, "source": "https://docs.aws.amazon.com/nova/latest/userguide/what-is-nova.html"},
+    "bedrock-nova-2-lite": {"vision": true, "source": "https://docs.aws.amazon.com/nova/latest/userguide/what-is-nova.html"},
+    "bedrock-nova-pro": {"context": 300000, "vision": true, "source": "https://docs.aws.amazon.com/nova/latest/userguide/what-is-nova.html"},
+    "bedrock-nova-micro": {"context": 128000, "vision": false, "source": "https://docs.aws.amazon.com/nova/latest/userguide/what-is-nova.html"},
+    "bedrock-llama4-maverick": {"vision": true, "source": "https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html"},
+    "bedrock-llama4-scout": {"vision": true, "source": "https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html"},
+    "bedrock-mistral-large-3": {"source": "https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html"},
+    "bedrock-deepseek-v3-2": {"context": 128000, "vision": false, "source": "https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html"},
+    "bedrock-qwen3-235b": {"vision": false, "source": "https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html"},
+    "bedrock-gpt-oss-120b": {"context": 128000, "vision": false, "source": "https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html"},
+    "bedrock-gpt-oss-20b": {"context": 128000, "vision": false, "source": "https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html"},
+    "bedrock-kimi-k2-5": {"source": "https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html"}
+  },
+  "prompt_caching": {
+    "note": "Price of cached input tokens as a share of the normal input price, for the static part of the prompt (system prompt and tool definitions). Assumes steady traffic keeps the cache warm; the one-off cache-write premium some vendors charge is left out.",
+    "rules": [
+      {"platform": "Anthropic API", "maker": "Anthropic", "cached_input": 0.1, "min_tokens": 1024, "source": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching"},
+      {"platform": "Amazon Bedrock", "maker": "Anthropic", "cached_input": 0.1, "min_tokens": 1024, "source": "https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html"},
+      {"platform": "Amazon Bedrock", "maker": "Amazon", "cached_input": 0.25, "min_tokens": 1000, "source": "https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html"},
+      {"platform": "Azure AI Foundry", "maker": "Anthropic", "cached_input": 0.1, "min_tokens": 1024, "source": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching"},
+      {"platform": "Azure AI Foundry", "maker": "OpenAI", "cached_input": 0.1, "min_tokens": 1024, "source": "https://learn.microsoft.com/azure/ai-foundry/openai/how-to/prompt-caching"},
+      {"platform": "OpenAI API", "maker": "OpenAI", "cached_input": 0.1, "min_tokens": 1024, "source": "https://platform.openai.com/docs/guides/prompt-caching"},
+      {"platform": "Gemini API", "maker": "Google", "cached_input": 0.25, "min_tokens": 1024, "source": "https://ai.google.dev/gemini-api/docs/caching"},
+      {"platform": "xAI API", "maker": "xAI", "cached_input": 0.25, "min_tokens": 1024, "source": "https://docs.x.ai/docs/models"}
+    ]
+  }
+}

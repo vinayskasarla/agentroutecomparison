@@ -12,6 +12,7 @@ import statistics
 import anthropic
 
 import catalog
+import constraints
 import policy
 
 ARCHITECT_MODEL = os.environ.get("ARCHITECT_MODEL", "claude-opus-5")
@@ -86,7 +87,7 @@ SPEC_SCHEMA = {
     "additionalProperties": False,
     "required": ["summary", "task_type", "labels", "needs_documents", "document_size", "needs_tools", "needs_memory", "multi_step",
                  "handles_personal_data", "risk", "latency", "requests_per_day", "repeat_rate", "accuracy_target",
-                 "reference_material", "test_cases", "assumptions"],
+                 "reference_material", "test_cases", "assumptions", "data_class", "needs_images"],
     "properties": {
         "summary": {"type": "string", "description": "One sentence restating what the agent must do."},
         "task_type": {"type": "string", "enum": TASK_TYPES},
@@ -99,6 +100,9 @@ SPEC_SCHEMA = {
         "needs_memory": {"type": "boolean", "description": "Needs conversation history or per-user memory."},
         "multi_step": {"type": "boolean", "description": "Needs several distinct reasoning or research steps."},
         "handles_personal_data": {"type": "boolean"},
+        "data_class": {"type": "string", "enum": ["public", "internal", "confidential", "regulated"],
+                       "description": "Most sensitive data the agent sees: confidential = customer/employee personal data; regulated = health, payment card or financial records."},
+        "needs_images": {"type": "boolean", "description": "Inputs include images, scans or screenshots."},
         "risk": {"type": "string", "enum": ["low", "medium", "high"],
                  "description": "Impact of a wrong answer or action (money, safety, legal, customer trust)."},
         "latency": {"type": "string", "enum": ["realtime", "interactive", "background"],
@@ -223,6 +227,9 @@ def spec_from_rules(goal: str) -> dict:
         "multi_step": task in ("research",) or _has(g, "multi-step", "several steps", "then ", "workflow"),
         "handles_personal_data": _has(g, "customer", "patient", "employee", "user", "email", "phone", "account",
                                       "personal", "payment", "hr "),
+        "data_class": ("regulated" if _has(g, "patient", "medical", "health record", "hipaa", "payment card", "credit card", "pci")
+                       else None),
+        "needs_images": _has(g, "image", "photo", "screenshot", "scan", "scanned", "picture", "diagram"),
         "risk": risk,
         "latency": latency,
         "requests_per_day": vol,
@@ -251,6 +258,22 @@ def finalize_spec(spec: dict) -> dict:
     s.setdefault("max_hallucination", 0.02 if s["risk"] == "high" else 0.05)
     s.setdefault("latency_budget_ms", LATENCY_BUDGET_MS[s["latency"]])
     s.setdefault("monthly_budget", None)
+    # Real prompt size: the test cases are short, production prompts aren't. Editable on the page.
+    num = lambda k, d: max(0, int(s[k])) if isinstance(s.get(k), (int, float)) else d  # noqa: E731
+    s["system_prompt_tokens"] = num("system_prompt_tokens", constraints.DEFAULT_SYSTEM_PROMPT.get(s["task_type"], 1000))
+    s["context_tokens"] = num("context_tokens", 3000 if s.get("needs_documents") else 0)
+    s["document_tokens"] = num("document_tokens", 30000 if s["document_size"] == "small" else 0)
+    s["history_tokens"] = num("history_tokens", 2000 if s.get("needs_memory") else 0)
+    s["output_tokens"] = num("output_tokens", 0) or None
+    s["prompt_caching"] = s.get("prompt_caching") is not False
+    s["peak_factor"] = min(50.0, max(1.0, float(s.get("peak_factor") or 3)))
+    s["data_class"] = s.get("data_class") if s.get("data_class") in ("public", "internal", "confidential", "regulated") else (
+        "confidential" if s.get("handles_personal_data") else "internal")
+    s["residency"] = s.get("residency") if s.get("residency") in ("any", "US", "EU", "APAC") else "any"
+    s["needs_images"] = bool(s.get("needs_images"))
+    s["existing"] = [x for x in (s.get("existing") or []) if x in ("gateway", "runtime", "cache", "vector_store")]
+    s["commitment"] = s.get("commitment") if s.get("commitment") in policy.APPROVED_PLATFORMS else None
+    s["engineer_week_usd"] = float(s["engineer_week_usd"]) if s.get("engineer_week_usd") else None
     return s
 
 
@@ -269,8 +292,14 @@ def items_for(spec: dict) -> list:
 
 
 # ------------------------------------------------------------------ composing and ranking designs
+PRICE_MULT: dict = {}  # what-if price changes, set only for the duration of a scenario
+
+
 def _cost(r, price):
-    return (r["in_tokens"] * price["in"] + r["out_tokens"] * price["out"]) / 1e6
+    cached = r.get("cached_tokens", 0)
+    tokens = ((r["in_tokens"] - cached) * price["in"] + cached * price["in"] * r.get("cache_mult", 1.0)
+              + r["out_tokens"] * price["out"])
+    return tokens / 1e6 * PRICE_MULT.get(price["id"], 1.0)
 
 
 def _p(a, q):
@@ -284,8 +313,10 @@ def _agg(rows):
     """rows: per test case {correct, halluc, cost, ms}. correct None = ungraded."""
     graded = [r for r in rows if r["correct"] is not None]
     n = len(graded)
+    right = sum(1 for r in graded if r["correct"])
+    lo, hi = constraints.wilson(right, n)
     return {
-        "n": n,
+        "n": n, "acc_lo": lo, "acc_hi": hi,
         "right": sum(1 for r in graded if r["correct"]),
         "accuracy": (sum(1 for r in graded if r["correct"]) / n) if n else None,
         "halluc": (sum(1 for r in graded if r["halluc"]) / n) if n else None,
@@ -412,6 +443,7 @@ def pick_models(res, spec, provider_of):
 
 def build_design(arch, models, variant, res, jev, spec):
     """One architecture with specific models: metrics composed from measured results, checked against requirements."""
+    res = constraints.inflate(res, spec, arch, list(models.values()))
     rows, evidence = compose(arch, models, res, jev, spec)
     m = _agg(rows)
     addons = addons_for(arch, spec)
@@ -419,18 +451,28 @@ def build_design(arch, models, variant, res, jev, spec):
     cache = next((a for a in addons if a["id"] == "cache"), None)
     per_req = m["cost_per_req"] * (1 - spec["repeat_rate"] if cache else 1) + infra
     p95 = m["p95_ms"] + sum(a["ms"] for a in addons)
+    per_req += constraints.embedding_cost_per_req(arch, spec)
     harness = harness_for(arch, models, res, rows, spec) if spec.get("harness") else None
     if harness:
         per_req += harness["cost_per_req"]
         p95 += harness["ms"]
+    own = res[models["primary"]]
+    tokens_per_call = statistics.fmean(r["in_tokens"] + r["out_tokens"] for r in own) if own else 0
+    cached_share = statistics.fmean(r["cached_tokens"] / r["in_tokens"] for r in own if r["in_tokens"]) if own else 0
+    t = constraints.tco(arch, spec, bool(harness))
     d = {
         "arch": arch, **ARCHITECTURES[arch],
         "sources": [PATTERN_KNOWLEDGE["sources"][k] for k in ARCHITECTURES[arch].get("sources", [])],
         "variant": variant, "models": dict(models), "evidence": evidence, "addons": addons, "harness": harness,
         "accuracy": m["accuracy"], "right": m["right"], "n": m["n"], "halluc": m["halluc"],
+        "acc_lo": m["acc_lo"], "acc_hi": m["acc_hi"], "tokens_per_call": tokens_per_call, "cached_share": cached_share,
+        "infra": t["infra"], "infra_monthly": t["infra_monthly"], "build_weeks": t["build_weeks"], "build_usd": t["build_usd"],
         "p50_ms": m["p50_ms"], "p95_ms": p95, "cost_per_req": per_req, "monthly": per_req * spec["requests_per_day"] * 30,
         "escalation_rate": (sum(1 for r in rows if r.get("escalated")) / len(rows)) if rows and arch in ("cascade", "rag_cascade", "decision_model") else None,
     }
+    d["total_monthly"] = d["monthly"] + d["infra_monthly"]
+    d["peak"] = constraints.peak(d, spec, tokens_per_call)
+    d["context_needed"] = constraints.required_context(spec, arch)
     d["checks"] = checks(d, spec)
     d["passes"] = all(c["pass"] for c in d["checks"])
     return d
@@ -448,6 +490,9 @@ def model_table(first, spec, res, jev, picks, mode):
                 "tier": info["tier"], "in": info["in"], "out": info["out"], "status": info.get("status"),
                 "verified_on": info.get("verified_on"), "source": info.get("source"), "note": info.get("review_note"),
                 "tested": tested, "estimated_from": ref, "mode": mode.get(m, "simulated") if tested else "estimate", "accuracy": acc, "halluc": d["halluc"] if tested else None,
+                "acc_lo": d["acc_lo"] if tested else None, "acc_hi": d["acc_hi"] if tested else None,
+                "context": constraints.caps(m)["context"], "retirement": constraints.retirement(m),
+                "cached_share": d["cached_share"], "failed": [c["key"] for c in d["checks"] if not c["pass"]] if tested else [],
                 "p95_ms": d["p95_ms"] if tested else None, "monthly": d["monthly"], "cost_per_req": d["cost_per_req"],
                 "cost_per_1k_correct": (d["cost_per_req"] * 1000 / acc) if acc else None,
                 "own_cost_per_req": _agg(_direct_rows(res if tested else {**res, m: res[ref]}, m))["cost_per_req"],
@@ -457,7 +502,8 @@ def model_table(first, spec, res, jev, picks, mode):
         rows.append(row(m, d, True))
     tested_ids = list(res)
     for info in catalog.MODELS:
-        if info.get("callable", True) or info["id"] in res or not policy.model_allowed(info["id"]):
+        if (info.get("callable", True) or info["id"] in res
+                or not policy.check_data(info["id"], spec["data_class"], spec["residency"])[0]):
             continue
         same = [t for t in tested_ids if catalog.MODEL_BY_ID[t]["tier"] == info["tier"]] or tested_ids
         ref = next((t for t in same if catalog.MODEL_BY_ID[t]["maker"] == info["maker"]), same[0])
@@ -468,8 +514,9 @@ def model_table(first, spec, res, jev, picks, mode):
     return rows
 
 
-def choose_from_table(table, first):
-    """Primary: the cheapest tested model meeting every requirement (verified prices first).
+def choose_from_table(table, first, spec=None):
+    """Primary: the cheapest tested model meeting every requirement (verified prices first; a model on the
+    platform you have a spend commitment with wins if it's within 15%).
     Fallback: the cheapest qualifying model on a different platform, so an outage of one doesn't take both down."""
     tested = [r for r in table if r["tested"]]
     # Prefer rows measured live over simulated ones whenever any live row qualifies.
@@ -478,6 +525,11 @@ def choose_from_table(table, first):
     good = [r for r in tested if r["meets"]]
     pool = [r for r in good if r["status"] == "verified"] or good
     primary = pool[0] if pool else max(tested, key=lambda r: (r["accuracy"] or 0, -(r["halluc"] or 0), -r["monthly"]))
+    commit = spec and spec.get("commitment")
+    if pool and commit and primary["platform"] != commit:
+        on = [r for r in pool if r["platform"] == commit]
+        if on and on[0]["monthly"] <= primary["monthly"] * 1.15:
+            primary = on[0]
     others = [r for r in good if r["platform"] != primary["platform"]]
     others = ([r for r in others if r["status"] == "verified" and r["maker"] != primary["maker"]]
               or [r for r in others if r["status"] == "verified"] or others)
@@ -519,7 +571,7 @@ def rank_designs(spec, res, jev, mode=None, jev_blocked=False):
             table = [r for r in table if r["tier"] != "small" or not r["tested"]]
         if not any(r["tested"] for r in table):
             continue
-        primary, fallback, good = choose_from_table(table, probe)
+        primary, fallback, good = choose_from_table(table, probe, spec)
         d = build_design(arch, {**base, "primary": primary, "fallback": fallback}, "value", res, jev, spec)
         d["_table"], d["_good"], d["_cheaper"] = table, good, cheaper_unverified(table, primary)
         designs.append(d)
@@ -532,14 +584,60 @@ def rank_designs(spec, res, jev, mode=None, jev_blocked=False):
         table = first["_table"]
         picks.update(primary=first["models"]["primary"], fallback=first["models"]["fallback"], qualifying=first["_good"],
                      cheaper_unverified=first["_cheaper"])
+        prim = next(r for r in table if r["id"] == first["models"]["primary"])
+        # Cheaper models that missed only on accuracy/hallucinations, but where the 95% range still reaches the
+        # target: more test cases could make them qualify. And qualifying models the winner isn't clearly better than.
+        picks["near_misses"] = [{"id": r["id"], "label": r["label"], "platform": r["platform"], "monthly": r["monthly"],
+                                 "accuracy": r["accuracy"], "acc_hi": r["acc_hi"]}
+                                for r in table if r["tested"] and not r["meets"] and r["monthly"] < prim["monthly"]
+                                and set(r["failed"]) <= {"accuracy", "halluc"} and "accuracy" in r["failed"]
+                                and (r["acc_hi"] or 0) >= spec["accuracy_target"]][:5]
+        picks["committed"] = bool(spec["commitment"] and prim["platform"] == spec["commitment"])
+        picks["retirement"] = prim["retirement"]
+        picks["fallback_retirement"] = next((r["retirement"] for r in table if r["id"] == first["models"]["fallback"]), None)
         if first["models"]["fallback"]:
             fbd = build_design(first["arch"], {**first["models"], "primary": first["models"]["fallback"]}, "fallback", res, jev, spec)
-            picks["fallback_design"] = {k: fbd[k] for k in ("accuracy", "right", "n", "halluc", "p95_ms", "monthly", "cost_per_req", "passes")}
+            picks["fallback_design"] = {k: fbd[k] for k in ("accuracy", "right", "n", "halluc", "p95_ms", "monthly", "cost_per_req", "passes", "acc_lo", "acc_hi")}
     for d in designs:
         for k in ("_table", "_good", "_cheaper"):
             d.pop(k, None)
     explain(top, spec, picks)
     return {"top": top, "all": designs, "not_applicable": why_not, "models": picks, "model_table": table}
+
+
+def robustness(spec, res, jev, mode, jev_blocked, base):
+    """Re-rank under what-if changes (no new model calls) and report whether the recommendation holds."""
+    if not base["top"]:
+        return []
+    first = base["top"][0]
+    arch, model = first["arch"], first["models"]["primary"]
+    name = catalog.MODEL_BY_ID[model]["label"]
+    prompt_keys = ("system_prompt_tokens", "context_tokens", "document_tokens", "history_tokens")
+    runs = [
+        ("10× the volume", {"requests_per_day": spec["requests_per_day"] * 10}, None),
+        ("A tenth of the volume", {"requests_per_day": max(1, spec["requests_per_day"] // 10)}, None),
+        ("Accuracy target 5 points higher", {"accuracy_target": min(1.0, spec["accuracy_target"] + 0.05)}, None)
+        if spec["accuracy_target"] < 0.99 else None,
+        ("Prompts twice as long", {k: spec[k] * 2 for k in prompt_keys}, None),
+        (f"{name} costs 30% more", {}, {model: 1.3}),
+        ("Without the production harness" if spec.get("harness") else "With a production harness",
+         {"harness": not spec.get("harness")}, None),
+    ]
+    out = []
+    for run in filter(None, runs):
+        label, change, prices = run
+        PRICE_MULT.clear()
+        PRICE_MULT.update(prices or {})
+        try:
+            r = rank_designs({**spec, **change}, res, jev, mode, jev_blocked)
+        finally:
+            PRICE_MULT.clear()
+        t = r["top"][0] if r["top"] else None
+        if t:
+            out.append({"scenario": label, "arch": t["arch"], "arch_name": t["name"], "model": t["models"]["primary"],
+                        "model_label": catalog.MODEL_BY_ID[t["models"]["primary"]]["label"], "monthly": t["total_monthly"],
+                        "passes": t["passes"], "same_arch": t["arch"] == arch, "same_model": t["models"]["primary"] == model})
+    return out
 
 
 def addons_for(arch, spec):
@@ -559,6 +657,9 @@ def addons_for(arch, spec):
     if spec["needs_documents"] and arch not in ("rag", "rag_cascade", "long_context") and not spec.get("harness"):
         out.append({"id": "grounding", "name": "Grounding check", "why": "verify each answer is supported by your documents",
                     "ms": 0, "per_1k": 0})
+    for a in out:  # already running it: reuse, no new cost
+        if a["id"] in spec["existing"]:
+            a.update(per_1k=0, existing=True, why=a["why"] + " (you already run one, so reuse it)")
     return out
 
 
@@ -629,11 +730,21 @@ def checks(d, spec):
                     "value": d["accuracy"], "target": spec["accuracy_target"]})
         out.append({"key": "halluc", "label": "Hallucinations", "pass": d["halluc"] <= spec["max_hallucination"],
                     "value": d["halluc"], "target": spec["max_hallucination"]})
+    if out:  # sure = the whole 95% range clears the target, not just the point estimate
+        out[0]["sure"] = d["acc_lo"] is not None and d["acc_lo"] >= spec["accuracy_target"]
+        out[0]["lo"], out[0]["hi"] = d["acc_lo"], d["acc_hi"]
     out.append({"key": "latency", "label": "Latency p95", "pass": d["p95_ms"] <= spec["latency_budget_ms"],
                 "value": d["p95_ms"], "target": spec["latency_budget_ms"]})
     if spec.get("monthly_budget"):
-        out.append({"key": "cost", "label": "Monthly cost", "pass": d["monthly"] <= spec["monthly_budget"],
-                    "value": d["monthly"], "target": spec["monthly_budget"]})
+        out.append({"key": "cost", "label": "Monthly cost", "pass": d["total_monthly"] <= spec["monthly_budget"],
+                    "value": d["total_monthly"], "target": spec["monthly_budget"]})
+    ctx = constraints.caps(d["models"]["primary"])["context"]
+    if ctx and d["context_needed"] > ctx * 0.25:
+        out.append({"key": "context", "label": "Context window", "pass": d["context_needed"] <= ctx,
+                    "value": d["context_needed"], "target": ctx})
+    if d["peak"]["quota"]:
+        out.append({"key": "quota", "label": "Peak load", "pass": not d["peak"]["over"],
+                    "value": d["peak"]["tpm"], "target": d["peak"]["quota"].get("tpm")})
     return out
 
 
@@ -643,13 +754,13 @@ def score_designs(designs, spec):
     if not designs:
         return
     w_cost, w_lat = (0.40, 0.0) if spec["latency"] == "background" else (0.25, 0.15)
-    min_cost = min(d["cost_per_req"] for d in designs) or 1e-9
+    min_cost = min(d["total_monthly"] for d in designs) or 1e-9
     min_lat = min(d["p95_ms"] for d in designs) or 1
     for d in designs:
         acc = d["accuracy"] if d["accuracy"] is not None else 0.8
         hall_pen = min(1.0, (d["halluc"] or 0) * 5)
         d["score"] = round(100 * (0.35 * acc * (1 - hall_pen * 0.5)
-                                  + w_cost * min(1.0, min_cost / max(d["cost_per_req"], 1e-9))
+                                  + w_cost * min(1.0, min_cost / max(d["total_monthly"], 1e-9))
                                   + w_lat * min(1.0, min_lat / max(d["p95_ms"], 1))
                                   + 0.25 * (6 - d["complexity"]) / 5), 1)
 
@@ -707,6 +818,13 @@ def explain(top, spec, picks):
         "evaluator_optimizer": "Written quality matters here, and a second review pass catches issues a single draft misses.",
     }[first["arch"]]
     reasons.append(arch_why)
+    if first.get("infra_monthly"):
+        reasons.append(f"Plus about {_usd(first['infra_monthly'])}/month of fixed infrastructure "
+                       f"({', '.join(i['name'].lower() for i in first['infra'] if i['monthly'])}).")
+    if first.get("cached_share", 0) >= 0.2:
+        reasons.append(f"Prompt caching covers {round(first['cached_share'] * 100)}% of input tokens, priced at the cached rate.")
+    if picks.get("committed"):
+        reasons.append(f"Runs on {catalog.MODEL_BY_ID[first['models']['primary']]['platform']}, where you have a spend commitment.")
     reasons.append(f"{label(first['models']['primary'])} is the cheapest model that meets every requirement in this architecture."
                    if first["models"]["primary"] in picks["qualifying"]
                    else f"{label(first['models']['primary'])} was the most accurate model tested, but none met every requirement.")
@@ -715,8 +833,10 @@ def explain(top, spec, picks):
         t = []
         if d["accuracy"] is not None and first["accuracy"] is not None:
             diff = round((d["accuracy"] - first["accuracy"]) * 100)
+            noise = (d["acc_lo"] is not None and first["acc_lo"] is not None
+                     and d["acc_lo"] <= first["acc_hi"] and first["acc_lo"] <= d["acc_hi"])
             if diff:
-                t.append(f"{'+' if diff > 0 else ''}{diff} pts accuracy")
+                t.append(f"{'+' if diff > 0 else ''}{diff} pts accuracy" + (f" (within noise at {d['n']} cases)" if noise else ""))
             else:
                 t.append("same accuracy on your cases")
         ratio = d["monthly"] / first["monthly"] if first["monthly"] else 1

@@ -51,4 +51,24 @@ def summary():
     return {"name": POLICY["name"], "owner": POLICY.get("owner"), "reviewed_on": POLICY.get("reviewed_on"),
             "approved_platforms": POLICY["approved_platforms"], "blocked_makers": sorted(BLOCKED_MAKERS),
             "services": {k: {**v, "approved": k in APPROVED_SERVICES} for k, v in POLICY.get("services", {}).items()},
-            "approved_models": sum(1 for m in catalog.MODELS if model_allowed(m["id"])), "excluded": excluded}
+            "approved_models": sum(1 for m in catalog.MODELS if model_allowed(m["id"])), "excluded": excluded,
+            "data_classes": POLICY.get("data_classes", {}), "regions": POLICY.get("regions", {}),
+            "data_rules_note": POLICY.get("data_rules_note")}
+
+
+DATA_CLASSES = POLICY.get("data_classes", {})
+REGIONS = POLICY.get("regions", {})
+
+
+def check_data(model_id, data_class, residency="any"):
+    """(allowed, reason) for sending this class of data to this model, in this region."""
+    ok, why = check_model(model_id)
+    if not ok:
+        return ok, why
+    plat = catalog.MODEL_BY_ID[model_id]["platform"]
+    rule = DATA_CLASSES.get(data_class, {}).get("platforms", "all")
+    if rule != "all" and plat not in rule:
+        return False, f"{plat} isn't approved for {DATA_CLASSES[data_class]['label'].split(' (')[0].lower()} data"
+    if residency and residency != "any" and residency not in REGIONS.get(plat, []):
+        return False, f"{plat} can't keep processing in the {residency}"
+    return True, None

@@ -9,6 +9,7 @@ One FastAPI process plays every role so the comparison needs no extra infra:
 Run:  uvicorn app:app --port 8088   then open http://localhost:8088
 """
 import asyncio
+import collections
 import hashlib
 import json
 import os
@@ -25,6 +26,7 @@ from pydantic import BaseModel
 
 import catalog
 import advisor
+import constraints
 import audit
 from pii import redact
 import news
@@ -519,6 +521,53 @@ class AdviseReq(BaseModel):
     spec: dict | None = None  # an edited spec from the page; skips the understanding step
     force_sim: bool = False
     harness: bool = False  # wrap each architecture in production controls, priced into the numbers
+    constraints: dict | None = None  # data class, region, images, existing platform pieces, commitment, engineer-week rate
+    fresh: bool = False  # skip the result cache
+
+
+# Advice is computed on the fly and never stored per user. Finished results are kept in memory for a while, keyed
+# by the question and the knowledge they were computed with, so asking again (or reopening the link) is instant.
+# Nothing is written to disk; a restart clears it.
+ADVICE_TTL = int(os.environ.get("ADVICE_CACHE_TTL", 24 * 3600))
+ADVICE_MAX = int(os.environ.get("ADVICE_CACHE_MAX", 200))
+_advice_cache: "collections.OrderedDict[str, dict]" = collections.OrderedDict()
+CONSTRAINT_KEYS = ("data_class", "residency", "needs_images", "existing", "commitment", "engineer_week_usd", "peak_factor")
+
+
+def _knowledge_version():
+    blob = json.dumps([[m["id"], m["in"], m["out"], m.get("status")] for m in catalog.MODELS]
+                      + [policy.POLICY, advisor.HARNESS, constraints.CAPS, constraints.TCO, constraints.QUOTAS], sort_keys=True)
+    return hashlib.sha256(blob.encode()).hexdigest()[:12]
+
+
+def _advice_key(req):
+    body = {"goal": " ".join(req.goal.lower().split()), "spec": req.spec, "harness": req.harness, "sim": req.force_sim,
+            "constraints": req.constraints or {}, "k": _knowledge_version()}
+    return hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()[:32]
+
+
+def _cache_get(key):
+    hit = _advice_cache.get(key)
+    if hit and time.time() - hit["at"] < ADVICE_TTL:
+        return hit
+    _advice_cache.pop(key, None)
+    return None
+
+
+def _cache_put(key, spec_event, advice):
+    _advice_cache[key] = {"at": time.time(), "spec": spec_event, "advice": advice}
+    _advice_cache.move_to_end(key)
+    while len(_advice_cache) > ADVICE_MAX:
+        _advice_cache.popitem(last=False)
+
+
+@app.get("/api/advice/{key}")
+async def api_advice_cached(key: str, request: Request):
+    hit = _cache_get(key)
+    if not hit:
+        return JSONResponse({"error": "This result has expired. Run the advice again."}, status_code=404)
+    audit.log("advice_reopened", request, key=key)
+    return {**hit["spec"], "advice": {**hit["advice"], "cached_at": hit["at"]}}
 
 
 @app.post("/api/advise")
@@ -527,6 +576,16 @@ async def api_advise(req: AdviseReq, request: Request):
     queue: asyncio.Queue = asyncio.Queue()
     started = time.perf_counter()
     audit.log("advise_requested", request, goal=req.goal, edited=bool(req.spec), force_sim=req.force_sim, harness=req.harness)
+    key = _advice_key(req)
+    hit = None if req.fresh else _cache_get(key)
+    if hit:
+        audit.log("advise_cache_hit", request, goal=req.goal, key=key)
+
+        async def cached():
+            yield json.dumps(hit["spec"]) + "\n"
+            yield json.dumps({**hit["advice"], "cached_at": hit["at"]}) + "\n"
+            yield json.dumps({"type": "done"}) + "\n"
+        return StreamingResponse(cached(), media_type="application/x-ndjson")
 
     async def work():
         await queue.put({"type": "stage", "stage": "understand"})
@@ -541,17 +600,22 @@ async def api_advise(req: AdviseReq, request: Request):
                 note = f"The Claude architect failed ({type(exc).__name__}: {str(exc)[:160]}); used built-in rules instead."
         else:
             spec, source = advisor.spec_from_rules(req.goal), "rules"
+        spec = {**spec, **{k: v for k, v in (req.constraints or {}).items() if k in CONSTRAINT_KEYS and v not in (None, "")}}
         spec = advisor.finalize_spec(spec)
         spec["harness"] = req.harness
         items = normalize_items(advisor.items_for(spec))
         confirm = advisor.cross_check(spec, req.goal) if source == "claude" and req.goal else []
-        await queue.put({"type": "spec", "spec": spec, "source": source, "note": note, "confirm": confirm,
-                         "architect_model": advisor.ARCHITECT_MODEL if source == "claude" else None})
+        spec_event = {"type": "spec", "spec": spec, "source": source, "note": note, "confirm": confirm,
+                      "architect_model": advisor.ARCHITECT_MODEL if source == "claude" else None}
+        await queue.put(spec_event)
 
         live_providers = [p for p in catalog.PROVIDERS if has_key(p)] if not req.force_sim else []
         # Every callable offering is tested: live where this server has access, simulated elsewhere (labelled per row).
         # Only approved models are tested, so test cases never reach an unapproved vendor.
-        models = [m["id"] for m in catalog.CALLABLE if policy.model_allowed(m["id"])]
+        # Models that can't take this data class or region, or lack a capability the agent needs, aren't tested at all.
+        models, excluded = constraints.screen([m["id"] for m in catalog.CALLABLE if policy.model_allowed(m["id"])], spec)
+        if not models:
+            raise ValueError("No approved model can take this data class and region. Relax the data constraints.")
         use_jev = (policy.service_allowed("jev") and bool(spec["labels"])
                    and all(i.get("options") and i.get("accept") for i in items))
         jev_blocked = bool(spec["labels"]) and not policy.service_allowed("jev")
@@ -598,6 +662,8 @@ async def api_advise(req: AdviseReq, request: Request):
         await queue.put({"type": "stage", "stage": "rank"})
         result = advisor.rank_designs(spec, res, jev, mode, jev_blocked=jev_blocked)
         result["harness"] = advisor.harness_advice(spec)
+        result["robustness"] = advisor.robustness(spec, res, jev, mode, jev_blocked, result)
+        result["excluded_models"] = excluded
         result["policy"] = {"name": policy.POLICY["name"], "approved_platforms": sorted(policy.APPROVED_PLATFORMS),
                             "excluded": [e for e in policy.summary()["excluded"]]}
         for row in result["model_table"]:
@@ -618,13 +684,15 @@ async def api_advise(req: AdviseReq, request: Request):
                          "accuracy": d["accuracy"], "p95_ms": round(d["p95_ms"]), "monthly_usd": round(d["monthly"], 2),
                          "meets_requirements": d["passes"]} for i, d in enumerate(result["top"])],
                   duration_ms=round((time.perf_counter() - started) * 1000))
-        await queue.put({"type": "advice", **result, "evaluated_models": models,
+        advice = {"type": "advice", **result, "evaluated_models": models, "key": key,
                          "simulated": any(v == "simulated" for v in mode.values()), "mode": mode,
                          "live_count": sum(v == "live" for v in mode.values()),
                          "cases": [{"input": c["input"], "expected": c["expected"]} for c in spec["test_cases"]],
                          "per_case": {m: [{k: r[k] for k in ("answer", "correct", "hallucinated", "latency_ms")} for r in rs]
                                       for m, rs in res.items()},
-                         "jev_per_case": [{k: r[k] for k in ("answer", "correct", "confidence")} for r in jev] if jev else None})
+                         "jev_per_case": [{k: r[k] for k in ("answer", "correct", "confidence")} for r in jev] if jev else None}
+        _cache_put(key, spec_event, advice)
+        await queue.put(advice)
 
     async def stream():
         task = asyncio.create_task(work())
