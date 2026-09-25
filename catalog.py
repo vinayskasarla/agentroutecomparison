@@ -88,6 +88,11 @@ PATHS = [
         "blurb": "Each app calls the provider SDK itself. Fastest and simplest; every team re-builds keys, retries, logging and safety on its own.",
     },
     {
+        "id": "direct_small", "name": "Direct · small model", "short": "Agent → provider's small LLM",
+        "chain": ["Agent", "Small LLM"],
+        "blurb": "Same as Direct, but always on the provider's small, cheap model. Shows whether your task actually needs the big one.",
+    },
+    {
         "id": "redis", "name": "Redis cache", "short": "Agent → Redis → LLM",
         "chain": ["Agent", "Redis", "LLM"],
         "blurb": "Exact-match response cache in front of the model. Repeat questions return in ~1 ms for $0; anything worded differently still hits the LLM.",
@@ -106,6 +111,11 @@ PATHS = [
         "id": "gateway", "name": "AI Gateway", "short": "Agent → AI Gateway → LLM",
         "chain": ["Agent", "AI Gateway", "LLM"],
         "blurb": "Central gateway owns provider keys, quotas, guardrails, cost metering and provider failover for every app.",
+    },
+    {
+        "id": "gateway_jev", "name": "AI Gateway → Jev → LLM", "short": "Gateway, then Jev, then LLM if unsure",
+        "chain": ["Agent", "AI Gateway", "Jev", "LLM if unsure"],
+        "blurb": "Everything the AI Gateway provides, plus Jev answering fixed-answer decisions when it's confident. Only unsure or free-text requests reach the LLM.",
     },
     {
         "id": "platform", "name": "Agent Runtime → AI Gateway → LLM", "short": "Enablement platform",
@@ -130,10 +140,12 @@ CAPABILITIES = [
 ]
 PATH_CAPS = {
     "direct": [],
+    "direct_small": [],
     "redis": ["cache"],
     "jev": ["calibrated"],
     "jev_llm": ["routing", "calibrated"],
     "gateway": ["keys", "quota", "pii", "inject", "audit", "chargeback", "failover"],
+    "gateway_jev": ["keys", "quota", "pii", "inject", "audit", "chargeback", "failover", "routing", "calibrated"],
     "platform": ["keys", "quota", "pii", "inject", "audit", "chargeback", "cache", "failover", "routing", "memory"],
 }
 
@@ -145,7 +157,17 @@ DEFAULT_ASSUMPTIONS = {
     "semantic_threshold": 0.8,   # token-overlap similarity needed for a semantic-cache hit
     "requests_per_day": 100000,  # for monthly cost projection
     "infra_per_1k": {            # USD per 1K requests for the middleware itself
-        "direct": 0.0, "redis": 0.002, "jev": 0.0, "jev_llm": 0.0, "gateway": 0.006, "platform": 0.015,
+        "direct": 0.0, "direct_small": 0.0, "redis": 0.002, "jev": 0.0, "jev_llm": 0.0, "gateway": 0.006, "gateway_jev": 0.006, "platform": 0.015,
     },
     "runtime_context_tokens": 180,  # memory + policy preamble the runtime injects
 }
+
+
+UNKNOWN_ANSWERS = ["unknown", "not specified", "not mentioned", "not covered", "does not say", "doesn't say",
+                   "don't know", "do not know", "cannot be determined", "no information"]
+
+
+def suite_items():
+    """The built-in quiz as normalized test cases."""
+    return [{**s, "options": OPTIONS[s["id"]], "sim_right": SIM_RIGHT[s["id"]], "sim_wrong": SIM_WRONG[s["id"]],
+             "unanswerable": False} for s in SUITE]

@@ -158,3 +158,47 @@ textarea.askbox { min-height: 90px; font-size: 15px; margin-top: 8px; }
 td.win .hint { color: var(--good); }
 @media (max-width: 960px) { .askgrid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .routecards { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 600px) { .askgrid, .stats { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .askgrid { grid-template-columns: minmax(0, 1fr); } }
+
+/* ---------- Architecture advisor */
+code { font-size: 12px; background: var(--surface-2); padding: 0 4px; border-radius: 4px; }
+input[type=text] { width: 100%; font: inherit; color: var(--ink); background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.reqs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px 20px; margin-top: 12px; }
+.reqs label { display: block; font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+.unit { display: flex; align-items: center; gap: 6px; }
+.unit span { color: var(--ink-2); }
+.unit input { max-width: 160px; }
+.reqflags { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 20px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
+table.cases td { vertical-align: top; white-space: normal; }
+table.cases td.n { width: 28px; padding-top: 16px; }
+table.cases textarea { min-height: 38px; resize: vertical; }
+table.cases td:nth-child(3) { width: 26%; }
+table.cases td:last-child { width: 44px; }
+.verdictcard { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.vhead { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.vhead .k, .kpi .k { font-size: 12px; color: var(--ink-2); text-transform: uppercase; letter-spacing: .04em; font-weight: 600; }
+.vname { font-size: 26px; font-weight: 750; letter-spacing: -0.01em; margin-top: 2px; }
+.vside { text-align: right; display: flex; flex-direction: column; align-items: flex-end; }
+.vwhy { font-size: 15px; margin: 14px 0; }
+.strength { font-weight: 700; font-size: 12.5px; padding: 3px 10px; border-radius: 999px; }
+.strength.strong { background: var(--good-bg); color: var(--good); }
+.strength.moderate { background: var(--surface-2); color: var(--ink); border: 1px solid var(--border); }
+.strength.weak { background: var(--bad-bg); color: var(--bad); }
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; }
+.kpi { border: 1px solid var(--grid); border-radius: 10px; padding: 10px 12px; }
+.kpi .v { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; margin: 2px 0; }
+.kpi .d { font-size: 12px; color: var(--ink-2); }
+.kpi.good .k { color: var(--good); } .kpi.bad { background: var(--bad-bg); border-color: transparent; } .kpi.bad .k { color: var(--bad); }
+ul.facts { margin: 0; padding-left: 20px; line-height: 1.7; }
+.ev { font-size: 10.5px; padding: 0 5px; border-radius: 4px; font-weight: 600; white-space: nowrap; }
+.ev.m { background: var(--good-bg); color: var(--good); }
+.ev.p { background: var(--surface-2); color: var(--ink-2); border: 1px solid var(--border); }
+.ev.c { background: var(--surface-2); color: var(--accent); border: 1px solid var(--border); }
+tr.recrow td { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+td.missed { color: var(--bad); font-weight: 600; }
+.steps-ol { margin: 6px 0 10px; padding-left: 20px; line-height: 1.7; }
+@media (max-width: 960px) { .reqs, .reqflags { grid-template-columns: repeat(2, minmax(0, 1fr)); } .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 600px) { .reqs, .reqflags { grid-template-columns: minmax(0, 1fr); } .vside { text-align: left; align-items: flex-start; } .setup .field { grid-column: auto !important; } }
+.scatterkey { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px 14px; font-size: 12px; color: var(--ink-2); margin-top: 8px; }
+.scatterkey b { display: inline-block; width: 18px; }
+.scatterkey .rec { color: var(--accent); font-weight: 600; }
+@media (max-width: 600px) { .scatterkey { grid-template-columns: minmax(0, 1fr); } }

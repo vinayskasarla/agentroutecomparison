@@ -1,0 +1,592 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Architecture Advisor · LLM Path Lab</title>
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Architecture Advisor</h1>
+      <p class="sub">Planning an agent? Describe the task, set your limits and give it test cases. Every candidate architecture
+        runs on your cases, and you get a recommended pattern with the evidence behind it.</p>
+      <nav class="tabs"><a href="/" class="on">Architecture advisor</a><a href="/ask">Ask a question</a><a href="/benchmark">Benchmark</a></nav>
+    </div>
+    <button class="ghost" id="theme" title="Toggle light / dark">◐ Theme</button>
+  </header>
+
+  <!-- 1. Task -->
+  <section class="card">
+    <h2>1 · What is the agent for?</h2>
+    <p class="hint">Start from an example that looks like your task, then edit anything.</p>
+    <div class="setup">
+      <div class="field" style="grid-column: span 2">
+        <label class="l" for="goal">Goal</label>
+        <textarea id="goal" placeholder="e.g. Route incoming support tickets to the right team within a second."></textarea>
+      </div>
+      <div class="field">
+        <label class="l" for="pack">Start from</label>
+        <select id="pack"></select>
+        <div class="hint" id="packHint" style="margin-top:6px"></div>
+      </div>
+      <div class="field">
+        <label class="l" for="model">Main model</label>
+        <select id="model"></select>
+        <div id="keychip"></div>
+        <label class="check"><input type="checkbox" id="forceSim"> <span>Force simulation (no API spend)</span></label>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. Requirements -->
+  <section class="card">
+    <h2>2 · What must it achieve?</h2>
+    <p class="hint">Hard limits. A pattern that misses any of them is ruled out, and the report says by how much.</p>
+    <div class="reqs">
+      <div><label for="minAcc">Minimum accuracy</label><div class="unit"><input type="number" id="minAcc" value="90" min="0" max="100"><span>%</span></div><div class="hint">Share of test cases answered correctly.</div></div>
+      <div><label for="maxHall">Maximum hallucination rate</label><div class="unit"><input type="number" id="maxHall" value="5" min="0" max="100"><span>%</span></div><div class="hint">Confident wrong answers, made-up facts, or answers outside your labels.</div></div>
+      <div><label for="p95">Latency budget (95% of requests)</label><div class="unit"><input type="number" id="p95" value="3000" step="100"><span>ms</span></div><div class="hint">The slowest 5% may take longer.</div></div>
+      <div><label for="budget">Monthly budget</label><div class="unit"><span>$</span><input type="number" id="budget" value="1000" step="50"></div><div class="hint">Model tokens plus platform cost.</div></div>
+      <div><label for="rpd">Requests per day</label><div class="unit"><input type="number" id="rpd" value="20000" step="1000"></div><div class="hint">Expected traffic, for the monthly cost.</div></div>
+      <div><label for="repeat">Repeat questions</label><div class="unit"><input type="number" id="repeat" value="20" min="0" max="95"><span>%</span></div><div class="hint">How often the same request comes in again. Caches save exactly this share.</div></div>
+    </div>
+    <div class="reqflags">
+      <label class="check"><input type="checkbox" id="pii" checked> <span><b>Handles personal data</b><br><span class="hint">Requires PII redaction before the model call.</span></span></label>
+      <label class="check"><input type="checkbox" id="memory"> <span><b>Needs memory, tools or multi-step work</b><br><span class="hint">Requires an agent runtime.</span></span></label>
+      <label class="check"><input type="checkbox" id="uptime"> <span><b>Must keep working if a model provider is down</b><br><span class="hint">Requires automatic provider failover.</span></span></label>
+    </div>
+  </section>
+
+  <!-- 3. Test cases -->
+  <section class="card">
+    <div class="cardhead">
+      <div><h2>3 · Test cases</h2>
+        <p class="hint" style="margin:0">Real examples of what the agent will see, with the answer you'd accept. Separate several acceptable answers with <code>|</code>.
+          For questions it must refuse, use <code>unknown</code> as the expected answer: answering them anyway counts as a hallucination.</p></div>
+      <span class="chip" id="caseCount"></span>
+    </div>
+    <div class="field" id="labelsRow" style="margin:12px 0">
+      <label class="l" for="labels">Allowed answers (optional)</label>
+      <input type="text" id="labels" placeholder="e.g. billing, technical, account, sales">
+      <div class="hint">For classification or routing. Enables Jev-based patterns, and answers outside this list count as hallucinations.</div>
+    </div>
+    <div class="field hidden" id="contextRow" style="margin:12px 0">
+      <label class="l" for="context">Reference material the agent must answer from (optional)</label>
+      <textarea id="context"></textarea>
+    </div>
+    <div class="tablewrap"><table class="cases" id="cases"></table></div>
+    <div class="runrow" style="margin-top:10px">
+      <button class="ghost" id="addCase">+ Add test case</button>
+      <span class="hint">Evidence strength grows with test cases: under 15 is weak, 15–39 moderate, 40+ strong.</span>
+    </div>
+    <div class="runrow">
+      <button class="primary" id="run">Evaluate architectures</button>
+      <div class="progress"><div id="bar"></div></div>
+      <span class="hint" id="status">Ready.</span>
+    </div>
+  </section>
+
+  <!-- 4. Decision -->
+  <section id="results" class="hidden">
+    <div class="banner" id="banner"></div>
+    <section class="card verdictcard" id="verdictCard"></section>
+
+    <div class="two">
+      <section class="card chart">
+        <h2>Accuracy vs monthly cost</h2>
+        <p class="hint" style="margin:0">Each numbered dot is a pattern. The shaded area meets your accuracy target and budget; dashed lines mark them.</p>
+        <div id="scatter"></div>
+      </section>
+      <section class="card">
+        <h2>How to build it</h2>
+        <div id="howto"></div>
+      </section>
+    </div>
+
+    <section class="card">
+      <h2>Every pattern against your requirements</h2>
+      <p class="hint">Ranges in brackets are 95% confidence intervals. With few test cases they are wide, so treat close results as a tie.
+        <span class="ev m">measured</span> on your cases · <span class="ev p">projected</span> from your traffic and repeat rate · <span class="ev c">capability</span> of the pattern.</p>
+      <div class="tablewrap"><table id="matrix"></table></div>
+    </section>
+
+    <section class="card">
+      <h2>Why not the others</h2>
+      <div id="whynot"></div>
+    </section>
+
+    <section class="card">
+      <details>
+        <summary style="cursor:pointer;font-weight:600">Every test case, pattern by pattern</summary>
+        <p class="hint">✓ correct · ✗ wrong · ⚠ hallucination · Jev = answered by Jev · ↘ smaller model</p>
+        <div class="tablewrap"><table class="drill" id="drill"></table></div>
+      </details>
+    </section>
+  </section>
+</main>
+<div id="tip"></div>
+
+<script src="/static/common.js"></script>
+<script>
+// ---------------------------------------------------------------- starter packs
+const POLICY = `Acme Returns Policy
+- Unused items can be returned within 30 days of delivery for a full refund.
+- Opened electronics can be returned within 14 days with a 15% restocking fee.
+- Refunds go back to the original payment method within 5 business days of the item arriving at our warehouse.
+- Gift cards and downloadable software cannot be returned.
+- Return shipping is free for orders over $50; otherwise a $6 label fee is deducted.`;
+
+const PACKS = {
+  routing: {
+    name: "Support ticket routing", hint: "Classification into fixed teams. Jev-based patterns are candidates.",
+    goal: "Route every incoming support ticket to the right team (billing, technical, account or sales) in under a second.",
+    labels: "billing, technical, account, sales", reqs: { minAcc: 90, maxHall: 3, p95: 1500, budget: 500, rpd: 50000, repeat: 15, pii: true, memory: false, uptime: true },
+    cases: [
+      ["I was charged twice for my subscription this month.", "billing"],
+      ["The mobile app crashes every time I upload a photo.", "technical"],
+      ["How do I change the email address on my profile?", "account"],
+      ["Do you offer volume discounts for 200 seats?", "sales"],
+      ["My invoice shows the wrong VAT number.", "billing"],
+      ["I get a 500 error when I call the orders API.", "technical"],
+      ["I'm locked out after too many password attempts.", "account"],
+      ["Can someone walk our team through the enterprise plan?", "sales"],
+      ["Why was my card declined when renewing?", "billing"],
+      ["Sync between desktop and phone stopped working yesterday.", "technical"],
+      ["Please delete my account and all my data.", "account"],
+      ["We'd like a quote for adding the analytics add-on.", "sales"],
+    ],
+  },
+  policy: {
+    name: "Answer questions from our documents", hint: "Grounded Q&A. Some questions aren't covered, to measure made-up answers.",
+    goal: "Answer customer questions using only our returns policy, and say 'unknown' when the policy doesn't cover it.",
+    context: POLICY, reqs: { minAcc: 80, maxHall: 10, p95: 4000, budget: 1500, rpd: 10000, repeat: 35, pii: true, memory: false, uptime: false },
+    cases: [
+      ["How many days do I have to return an unused item?", "30"],
+      ["Is there a fee for returning opened headphones?", "15%|restocking"],
+      ["How long until my refund shows up?", "5 business days|5"],
+      ["Can I return a gift card?", "no|cannot"],
+      ["Is return shipping free on a $30 order?", "no|$6"],
+      ["Do you ship to Canada?", "unknown"],
+      ["Can I exchange an item for a different size instead of a refund?", "unknown"],
+      ["Can I return downloadable software?", "no|cannot"],
+      ["What is the restocking fee for opened electronics?", "15%"],
+      ["Who pays return shipping on a $120 order?", "free|you don't|no fee"],
+    ],
+  },
+  extract: {
+    name: "Extract fields from messages", hint: "Pull one value out of free text. Checks exact extraction.",
+    goal: "Extract the order number from customer emails so the agent can look the order up.",
+    reqs: { minAcc: 85, maxHall: 15, p95: 3000, budget: 1500, rpd: 10000, repeat: 5, pii: true, memory: false, uptime: false },
+    cases: [
+      ["Hi, my order A-10492 arrived damaged. What is the order number? Reply with just the order number.", "A-10492"],
+      ["Order #B77310 still hasn't shipped, can you check? What is the order number? Reply with just the order number.", "B77310"],
+      ["I'm Jane (jane.roe@acme.com). Ref: ORD-5521-X. Where's my parcel? What is the order number? Reply with just the order number.", "ORD-5521-X"],
+      ["Tracking says delivered but no box. Order no. 884201. What is the order number? Reply with just the order number.", "884201"],
+      ["Please cancel order C-3009 and C-3010, only C-3010 was a mistake. Which order should be cancelled? Reply with just the order number.", "C-3010"],
+      ["Hey, where is my stuff?? What is the order number? Reply with just the order number, or unknown if there isn't one.", "unknown"],
+      ["Invoice INV-2231 for order A-20931 has the wrong address. What is the order number? Reply with just the order number.", "A-20931"],
+      ["My card 4111 1111 1111 1111 was charged for order Z-1180 twice. What is the order number? Reply with just the order number.", "Z-1180"],
+    ],
+  },
+  general: {
+    name: "General assistant (open questions)", hint: "Open-ended answers graded by expected keywords.",
+    goal: "Answer employees' general questions quickly and cheaply.",
+    reqs: { minAcc: 80, maxHall: 15, p95: 5000, budget: 2000, rpd: 5000, repeat: 30, pii: false, memory: true, uptime: false },
+    cases: [
+      ["What is 17 * 23?", "391"],
+      ["What is the capital city of Australia?", "Canberra"],
+      ["How many times does the letter r appear in strawberry?", "3|three"],
+      ["Which number is larger: 9.11 or 9.9?", "9.9"],
+      ["A bat and a ball cost $1.10. The bat costs $1.00 more than the ball. How many cents is the ball?", "5|five"],
+      ["Which HTTP status code means Too Many Requests?", "429"],
+      ["What is 15% of 240?", "36"],
+      ["Who was the CEO of our company in 1850?", "unknown"],
+    ],
+  },
+  blank: { name: "Blank — my own cases", hint: "Write your own test cases below.", goal: "", reqs: null, cases: [["", ""], ["", ""], ["", ""]] },
+};
+
+// How a team would build each pattern.
+const HOWTO = {
+  direct: ["Call the provider SDK from your service.", "Keep API keys in your secrets manager and add retries with backoff.",
+    "Log prompts, answers, tokens and latency yourself.", "Re-run these test cases whenever you change the prompt or model."],
+  direct_small: ["Call the provider's small model directly.", "Keep these test cases as a regression suite: small models slip first when prompts change.",
+    "Watch accuracy weekly and switch up a tier if it drops below target."],
+  redis: ["Put an exact-match cache in front of the model, keyed on model + normalized prompt.",
+    "Set a TTL and clear the cache when the prompt template or model changes.", "Track the hit rate: savings equal the share of repeat requests."],
+  jev: ["Model the task as a Jev choice question with your labels as criteria.", "Use Jev's probabilities: act automatically above a threshold, send the rest to a person.",
+    "Keep these test cases to check calibration as labels change."],
+  jev_llm: ["Ask Jev first with your labels; accept its answer when confidence ≥ 0.8.", "Escalate lower-confidence requests to the main model.",
+    "Log both answers on escalations to tune the threshold over time."],
+  gateway_jev: ["Register the app with the AI Gateway: app ID, quota, cost tag, PII redaction and failover.",
+    "Define the decision as a Jev choice question with your labels; the gateway accepts Jev's answer at confidence ≥ 0.8.",
+    "Lower-confidence and free-text requests go to the main model through the same gateway.",
+    "Review escalations weekly to tune the threshold and labels."],
+  gateway: ["Register the app with the AI Gateway: app ID, quota and cost tag.", "Turn on the PII-redaction and prompt-injection policies.",
+    "Configure a failover model from a second provider.", "Use the gateway's usage metrics for cost reporting."],
+  platform: ["Define the agent on the Agent Runtime: tools, memory and policy.", "Model calls go through the AI Gateway with caching and the Jev router on.",
+    "Set the cache TTL and similarity threshold for your content.", "Add these test cases to the platform's evaluation suite and alert on regressions."],
+};
+
+let CFG, RUN = null;
+const Z = 1.96;
+
+// ---------------------------------------------------------------- setup
+$("#pack").innerHTML = Object.entries(PACKS).map(([k, p]) => `<option value="${k}">${esc(p.name)}</option>`).join("");
+$("#pack").onchange = () => loadPack($("#pack").value);
+$("#addCase").onclick = () => { addCaseRow("", ""); countCases(); };
+$("#cases").addEventListener("input", countCases);
+$("#cases").addEventListener("click", (e) => { if (e.target.closest(".rm")) { e.target.closest("tr").remove(); countCases(); } });
+
+fetch("/api/config").then((r) => r.json()).then((cfg) => {
+  CFG = cfg;
+  for (const [pid, p] of Object.entries(cfg.providers)) {
+    const g = document.createElement("optgroup"); g.label = p.label;
+    cfg.models.filter((m) => m.provider === pid).forEach((m) => {
+      const o = document.createElement("option"); o.value = m.id; o.textContent = `${m.label}  ·  $${m.in} / $${m.out}`; g.appendChild(o);
+    });
+    $("#model").appendChild(g);
+  }
+  $("#model").value = "claude-sonnet-5";
+  $("#model").onchange = keyChip; $("#forceSim").onchange = keyChip; keyChip();
+  loadPack("routing");
+});
+
+function modelInfo(id) { return CFG.models.find((m) => m.id === id); }
+function pathInfo(id) { return CFG.paths.find((p) => p.id === id); }
+function keyChip() {
+  const m = modelInfo($("#model").value), p = CFG.providers[m.provider], sim = $("#forceSim").checked;
+  const live = CFG.keys[m.provider] && !sim;
+  $("#keychip").innerHTML = `<span class="chip"><i class="dot" style="background:${live ? "var(--good)" : "var(--muted)"}"></i>${live ? "Live calls" : "Simulated · set " + p.env + " for real evidence"}</span>`;
+}
+
+function loadPack(key) {
+  const p = PACKS[key];
+  $("#pack").value = key; $("#packHint").textContent = p.hint;
+  $("#goal").value = p.goal; $("#labels").value = p.labels || "";
+  $("#context").value = p.context || ""; $("#contextRow").classList.toggle("hidden", !p.context && key !== "blank");
+  if (p.reqs) for (const [k, v] of Object.entries(p.reqs)) { const el = $("#" + k); if (el.type === "checkbox") el.checked = v; else el.value = v; }
+  $("#cases").innerHTML = `<thead><tr><th>#</th><th>What the agent receives</th><th>Expected answer</th><th></th></tr></thead><tbody></tbody>`;
+  p.cases.forEach(([i, e]) => addCaseRow(i, e));
+  countCases();
+}
+function addCaseRow(input, expected) {
+  const tr = document.createElement("tr");
+  tr.innerHTML = `<td class="hint n"></td><td><textarea rows="1" class="ci">${esc(input)}</textarea></td>
+    <td><input type="text" class="ce" value="${esc(expected)}"></td><td><button class="ghost rm" title="Remove">✕</button></td>`;
+  $("#cases tbody").appendChild(tr);
+}
+function readCases() {
+  return [...document.querySelectorAll("#cases tbody tr")].map((tr) => ({ input: tr.querySelector(".ci").value.trim(), expected: tr.querySelector(".ce").value.trim() }))
+    .filter((c) => c.input);
+}
+function countCases() {
+  [...document.querySelectorAll("#cases tbody tr")].forEach((tr, i) => (tr.querySelector(".n").textContent = i + 1));
+  const n = readCases().filter((c) => c.expected).length;
+  $("#caseCount").textContent = `${n} graded test case${n === 1 ? "" : "s"} · evidence ${strength(n).label.toLowerCase()}`;
+}
+function strength(n, simulated) {
+  if (simulated) return { label: "Indicative", cls: "weak", why: "Model results are simulated. Add API keys to turn this into real evidence." };
+  if (n >= 40) return { label: "Strong", cls: "strong", why: `${n} graded test cases.` };
+  if (n >= 15) return { label: "Moderate", cls: "moderate", why: `${n} graded test cases; 40+ would make close calls decisive.` };
+  return { label: "Weak", cls: "weak", why: `Only ${n} graded test cases; add more before committing.` };
+}
+
+// ---------------------------------------------------------------- run
+$("#run").onclick = async () => {
+  const cases = readCases();
+  if (!cases.length) return alert("Add at least one test case.");
+  const labels = $("#labels").value.split(",").map((s) => s.trim()).filter(Boolean);
+  const context = $("#context").value.trim();
+  const items = cases.map((c) => ({
+    input: context ? `Reference material:\n${context}\n\nQuestion: ${c.input}\nAnswer only from the reference material. If it doesn't cover the question, answer "unknown".` : c.input,
+    expected: c.expected, options: labels.length ? labels : null, grounded: !!context,
+  }));
+  const req = {
+    minAcc: +$("#minAcc").value / 100, maxHall: +$("#maxHall").value / 100, p95: +$("#p95").value, budget: +$("#budget").value,
+    rpd: +$("#rpd").value, repeat: Math.min(0.95, Math.max(0, +$("#repeat").value / 100)),
+    pii: $("#pii").checked, memory: $("#memory").checked, uptime: $("#uptime").checked,
+  };
+  const body = { model: $("#model").value, workload: "examples", items, passes: 1, force_sim: $("#forceSim").checked,
+    paths: CFG.paths.map((p) => p.id), assumptions: { requests_per_day: req.rpd } };
+  RUN = { body, req, cases, goal: $("#goal").value.trim(), pack: $("#pack").value, calls: [], meta: null };
+  $("#run").disabled = true; $("#status").textContent = "Evaluating…"; $("#bar").style.width = "0";
+  try {
+    const resp = await fetch("/api/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const reader = resp.body.getReader(), dec = new TextDecoder(); let buf = "";
+    while (true) {
+      const { value, done } = await reader.read(); if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl; while ((nl = buf.indexOf("\n")) >= 0) {
+        const ev = JSON.parse(buf.slice(0, nl)); buf = buf.slice(nl + 1);
+        if (ev.type === "meta") RUN.meta = ev;
+        if (ev.type === "call") RUN.calls.push(ev);
+      }
+      if (RUN.meta) { $("#bar").style.width = (100 * RUN.calls.length / RUN.meta.total) + "%"; $("#status").textContent = `${RUN.calls.length} / ${RUN.meta.total} calls`; }
+    }
+    render(); $("#status").textContent = `Done · ${RUN.calls.length} calls`;
+    $("#results").scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (e) { $("#status").textContent = "Failed: " + e.message; }
+  $("#run").disabled = false;
+};
+
+// ---------------------------------------------------------------- analysis
+function wilson(k, n) {
+  if (!n) return [0, 1];
+  const p = k / n, d = 1 + Z * Z / n, c = p + Z * Z / (2 * n), m = Z * Math.sqrt(p * (1 - p) / n + Z * Z / (4 * n * n));
+  return [Math.max(0, (c - m) / d), Math.min(1, (c + m) / d)];
+}
+function pctl(a, p) { if (!a.length) return 0; const s = [...a].sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; }
+const CACHED = new Set(["redis", "platform"]);
+
+function evaluate() {
+  const r = RUN.req;
+  return RUN.meta.paths.map((id) => {
+    const calls = RUN.calls.filter((c) => c.path === id), ok = calls.filter((c) => !c.error);
+    const gradedN = RUN.meta.items.filter((i) => i.accept).length;
+    // a failed call on a graded case counts as a wrong answer
+    const right = calls.filter((c) => c.correct).length, hall = calls.filter((c) => c.hallucinated).length;
+    const lat = calls.map((c) => c.latency_ms);
+    const tok = mean(calls.map((c) => { const m = modelInfo(c.model) || { in: 0, out: 0 };
+      return (c.in_tokens * m.in + c.out_tokens * m.out + (c.jev_in_tokens || 0) * CFG.jev.in) / 1e6; }));
+    const infra = (CFG.assumptions.infra_per_1k[id] || 0) / 1000;
+    const perReq = (CACHED.has(id) ? (1 - r.repeat) * tok : tok) + infra;
+    const caps = CFG.path_caps[id];
+    const row = {
+      id, p: pathInfo(id), n: gradedN, right, hall, success: calls.length ? ok.length / calls.length : 0,
+      acc: gradedN ? right / gradedN : null, accCI: wilson(right, gradedN), hallRate: gradedN ? hall / gradedN : null, hallCI: wilson(hall, gradedN),
+      p50: pctl(lat, 0.5), p95: pctl(lat, 0.95), perReq, monthly: perReq * r.rpd * 30, caps,
+      jevShare: calls.length ? calls.filter((c) => c.decided_by === "jev").length / calls.length : 0,
+      smallShare: calls.length ? calls.filter((c) => c.routed_to).length / calls.length : 0,
+      models: [...new Set(ok.map((c) => c.model))],
+      badCache: calls.filter((c) => c.cache && String(c.cache).startsWith("semantic") && c.correct === false).length,
+    };
+    const checks = [];
+    const add = (key, label, pass, value, target, ev, fix) => checks.push({ key, label, pass, value, target, ev, fix });
+    if (gradedN) {
+      add("acc", "Accuracy", row.acc >= r.minAcc, fmtPct(row.acc), `≥ ${fmtPct(r.minAcc)}`, "m", row.acc >= r.minAcc && row.accCI[0] < r.minAcc ? "borderline" : null);
+      add("hall", "Hallucinations", row.hallRate <= r.maxHall, fmtPct(row.hallRate), `≤ ${fmtPct(r.maxHall)}`, "m");
+    }
+    add("p95", "Latency p95", row.p95 <= r.p95, fmtMs(row.p95), `≤ ${fmtMs(r.p95)}`, "m");
+    add("cost", "Monthly cost", row.monthly <= r.budget, fmt$(row.monthly), `≤ ${fmt$(r.budget)}`, "p");
+    if (r.pii) add("pii", "PII redaction", caps.includes("pii"), caps.includes("pii") ? "yes" : "no", "required", "c");
+    if (r.memory) add("memory", "Memory & tools", caps.includes("memory"), caps.includes("memory") ? "yes" : "no", "required", "c");
+    if (r.uptime) add("failover", "Provider failover", caps.includes("failover"), caps.includes("failover") ? "yes" : "no", "required", "c");
+    if (row.success < 0.95) add("errors", "Calls that failed", false, fmtPct(1 - row.success), "< 5%", "m");
+    row.checks = checks; row.failed = checks.filter((c) => !c.pass); row.passes = !row.failed.length;
+    return row;
+  });
+}
+function mean(a) { return a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0; }
+
+function decide(rows) {
+  const passing = rows.filter((r) => r.passes).sort((a, b) => a.monthly - b.monthly || a.p95 - b.p95);
+  if (passing.length) return { rec: passing[0], passing, met: true };
+  // A missing capability can't be tuned away, so it outranks any measured miss.
+  const capMiss = (r) => r.failed.filter((f) => f.ev === "c").length;
+  const closest = [...rows].sort((a, b) => capMiss(a) - capMiss(b) || a.failed.length - b.failed.length
+    || (b.acc ?? 0) - (a.acc ?? 0) || a.monthly - b.monthly)[0];
+  return { rec: closest, passing: [], met: false };
+}
+
+// ---------------------------------------------------------------- rendering
+function render() {
+  $("#results").classList.remove("hidden");
+  const rows = evaluate(), d = decide(rows), sim = RUN.calls.some((c) => c.simulated);
+  const n = rows[0] ? rows[0].n : 0, st = strength(n, sim);
+  RUN.rows = rows; RUN.decision = d; RUN.strength = st;
+  $("#banner").innerHTML = `${esc(modelInfo(RUN.body.model).label)} · ${n} graded test cases · ${rows.length} patterns ·
+    model calls <b>${sim ? "simulated" : "live"}</b> · Jev <b>${RUN.meta.jev_live ? "live" : "simulated"}</b>` +
+    (RUN.meta.paths.includes("jev") ? "" : " · “Jev only” skipped: it needs allowed answers on every test case");
+  renderVerdict(rows, d, st); renderScatter(rows, d); renderHowto(d); renderMatrix(rows, d); renderWhyNot(rows, d); renderDrill();
+}
+
+function renderVerdict(rows, d, st) {
+  const r = d.rec, req = RUN.req;
+  const runner = d.passing[1];
+  const tieNote = runner && r.acc != null && runner.acc != null && runner.accCI[0] <= r.accCI[1] && r.accCI[0] <= runner.accCI[1]
+    ? `<li><b>${esc(runner.p.name)}</b> also qualifies at ${fmt$(runner.monthly)}/month; accuracy is statistically tied with the recommendation, so cost decided it.</li>` : "";
+  const facts = [
+    r.acc != null ? `<li>Answered <b>${r.right} of ${r.n}</b> test cases correctly (${fmtPct(r.acc)}, likely range ${fmtPct(r.accCI[0])}–${fmtPct(r.accCI[1])}) against a target of ${fmtPct(req.minAcc)}.</li>` : "",
+    r.hallRate != null ? `<li>Hallucinated on <b>${r.hall}</b> test case${r.hall === 1 ? "" : "s"} (${fmtPct(r.hallRate)}; limit ${fmtPct(req.maxHall)}).</li>` : "",
+    `<li>95% of requests finished within <b>${fmtMs(r.p95)}</b> (budget ${fmtMs(req.p95)}); median ${fmtMs(r.p50)}.</li>`,
+    `<li>Projected <b>${fmt$(r.monthly)}/month</b> at ${req.rpd.toLocaleString()} requests/day${CACHED.has(r.id) ? ` with ${Math.round(req.repeat * 100)}% repeat requests served from cache` : ""} (budget ${fmt$(req.budget)}).</li>`,
+    r.jevShare ? `<li>Jev answered ${fmtPct(r.jevShare)} of requests without calling the model.</li>` : "",
+    r.smallShare ? `<li>${fmtPct(r.smallShare)} of requests ran on the smaller model.</li>` : "",
+    ...[["pii", "Personal data is redacted before it reaches the model."], ["memory", "Provides memory, tools and policy through the agent runtime."],
+      ["failover", "Fails over to a second provider during outages."]].filter(([k]) => r.caps.includes(k) && (k !== "pii" || req.pii) && (k !== "memory" || req.memory) && (k !== "failover" || req.uptime)).map(([, t]) => `<li>${t}</li>`),
+    tieNote,
+  ].join("");
+  $("#verdictCard").innerHTML = `
+    <div class="vhead">
+      <div>
+        <div class="k">${d.met ? "Recommended architecture" : "No pattern meets every requirement — closest option"}</div>
+        <div class="vname">${esc(r.p.name)}</div>
+        <div class="chain" style="margin-top:6px">${r.p.chain.map((x) => `<span class="node ${/LLM/.test(x) ? "llm" : ""}">${esc(x)}</span>`).join('<span class="arrow">→</span>')}</div>
+      </div>
+      <div class="vside">
+        <span class="strength ${st.cls}">Evidence: ${st.label}</span>
+        <div class="hint" style="max-width:260px;margin-top:6px">${esc(st.why)}</div>
+        <button class="ghost" id="adr" style="margin-top:10px">⬇ Download decision record</button>
+      </div>
+    </div>
+    <p class="vwhy">${d.met
+      ? `It is the ${d.passing.length > 1 ? "cheapest of the " + d.passing.length + " patterns" : "only pattern"} that meet${d.passing.length > 1 ? "" : "s"} all of your requirements.`
+      : `It misses ${r.failed.length} requirement${r.failed.length > 1 ? "s" : ""}: ${r.failed.map((f) => `${f.label.toLowerCase()} (${f.value} vs ${f.target})`).join(", ")}. ${suggest(r)}`}</p>
+    <div class="kpis">
+      ${kpi("Accuracy", fmtPct(r.acc), r.acc != null ? `${fmtPct(r.accCI[0])}–${fmtPct(r.accCI[1])}` : "not graded", check(r, "acc"))}
+      ${kpi("Hallucinations", fmtPct(r.hallRate), r.hallRate != null ? `${r.hall} of ${r.n} cases` : "", check(r, "hall"))}
+      ${kpi("Latency p95", fmtMs(r.p95), `median ${fmtMs(r.p50)}`, check(r, "p95"))}
+      ${kpi("Monthly cost", fmt$(r.monthly), `${fmt$(r.perReq * 1000)} per 1K requests`, check(r, "cost"))}
+    </div>
+    <ul class="facts">${facts}</ul>`;
+  $("#adr").onclick = downloadADR;
+}
+function check(r, key) { const c = r.checks.find((x) => x.key === key); return c ? c.pass : null; }
+function kpi(k, v, d, pass) {
+  return `<div class="kpi ${pass === false ? "bad" : pass ? "good" : ""}"><div class="k">${k} ${pass === false ? "✗" : pass ? "✓" : ""}</div><div class="v">${v}</div><div class="d">${d}</div></div>`;
+}
+function suggest(r) {
+  const tips = [];
+  const f = Object.fromEntries(r.failed.map((x) => [x.key, x]));
+  if (f.acc || f.hall) tips.push("try a larger main model, or clearer instructions and allowed answers");
+  if (f.cost) tips.push(`raise the budget to about ${fmt$(r.monthly * 1.1)}, or pick a cheaper model`);
+  if (f.p95) tips.push(`relax the latency budget to about ${fmtMs(r.p95 * 1.1)}, or use a faster model`);
+  if (f.pii || f.memory || f.failover) tips.push("add the missing platform capability (AI Gateway or Agent Runtime)");
+  return tips.length ? "To close the gap: " + tips.join("; ") + "." : "";
+}
+
+function renderScatter(rows, d) {
+  const el = $("#scatter"), W = el.clientWidth || 520, H = 300, L = 44, R = 16, T = 14, B = 36, req = RUN.req;
+  const graded = rows.filter((r) => r.acc != null);
+  if (!graded.length) { el.innerHTML = '<p class="hint">Add expected answers to see accuracy.</p>'; return; }
+  const xs = rows.map((r) => Math.max(r.monthly, 0.01)).concat([req.budget]);
+  const lo = Math.log10(Math.min(...xs) / 1.6), hi = Math.log10(Math.max(...xs) * 1.6);
+  const X = (v) => L + (Math.log10(Math.max(v, 0.01)) - lo) / (hi - lo) * (W - L - R);
+  const ymin = Math.max(0, Math.min(req.minAcc, ...graded.map((r) => r.acc)) - 0.1);
+  const Y = (v) => T + (1 - (v - ymin) / (1 - ymin)) * (H - T - B);
+  let svg = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="Accuracy versus monthly cost">`;
+  svg += `<rect x="${L}" y="${Y(1)}" width="${Math.max(0, X(req.budget) - L)}" height="${Math.max(0, Y(req.minAcc) - Y(1))}" fill="var(--good-bg)"/>`;
+  [0, 0.25, 0.5, 0.75, 1].map((t) => ymin + t * (1 - ymin)).forEach((v) =>
+    (svg += `<line class="gridline" x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${L - 6}" y="${Y(v) + 4}" text-anchor="end">${Math.round(v * 100)}%</text>`));
+  for (let e = Math.ceil(lo); e <= Math.floor(hi); e++) svg += `<text x="${X(10 ** e)}" y="${H - 18}" text-anchor="middle">${fmt$(10 ** e)}</text>`;
+  svg += `<text x="${(L + W - R) / 2}" y="${H - 2}" text-anchor="middle">Monthly cost (log scale)</text>`;
+  svg += `<line x1="${X(req.budget)}" x2="${X(req.budget)}" y1="${T}" y2="${H - B}" stroke="var(--axis)" stroke-dasharray="4 3"/>`;
+  svg += `<line x1="${L}" x2="${W - R}" y1="${Y(req.minAcc)}" y2="${Y(req.minAcc)}" stroke="var(--axis)" stroke-dasharray="4 3"/>`;
+  // Numbered dots with a key below: many patterns tie on accuracy, so text labels would collide.
+  const order = [...graded].sort((a, b) => a.monthly - b.monthly);
+  order.forEach((r, i) => {
+    const x = X(r.monthly), y = Y(r.acc), isRec = r === d.rec, jitter = order.filter((o, j) => j < i && Math.abs(X(o.monthly) - x) < 14 && Math.abs(Y(o.acc) - y) < 14).length * 9;
+    svg += `<g data-tip="${esc(r.p.name)}: ${fmtPct(r.acc)} accurate, ${fmt$(r.monthly)}/month, p95 ${fmtMs(r.p95)}">
+      <circle cx="${x + jitter}" cy="${y + jitter}" r="9" fill="${isRec ? "var(--accent)" : "var(--surface)"}" stroke="${isRec ? "var(--accent)" : "var(--ink-2)"}" stroke-width="1.5"/>
+      <text x="${x + jitter}" y="${y + jitter + 4}" text-anchor="middle" style="font-size:10.5px;font-weight:700;fill:${isRec ? "#fff" : "var(--ink)"}">${i + 1}</text></g>`;
+  });
+  RUN.scatterKey = order.map((r, i) => `<span class="${r === d.rec ? "rec" : ""}"><b>${i + 1}</b> ${esc(r.p.name)} · ${fmtPct(r.acc)} · ${fmt$(r.monthly)}</span>`).join("");
+  el.innerHTML = svg + `</svg><div class="scatterkey">${RUN.scatterKey}</div>`;
+}
+
+function renderHowto(d) {
+  const steps = HOWTO[d.rec.id] || [];
+  $("#howto").innerHTML = `<p class="hint">Pattern: <b>${esc(d.rec.p.name)}</b></p><ol class="steps-ol">${steps.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>
+    <p class="hint">Keep your ${RUN.cases.length} test cases as the agent's regression suite and re-run this evaluation before each prompt or model change.</p>`;
+}
+
+function renderMatrix(rows, d) {
+  const keys = [...new Map(rows.flatMap((r) => r.checks).map((c) => [c.key, c])).values()];
+  const sorted = [...rows].sort((a, b) => (b.passes - a.passes) || a.failed.length - b.failed.length || a.monthly - b.monthly);
+  $("#matrix").innerHTML = `<thead><tr><th>Pattern</th><th>Verdict</th>${keys.map((k) => `<th class="num">${k.label}<span class="hint">${k.target} <span class="ev ${k.ev}">${{ m: "measured", p: "projected", c: "capability" }[k.ev]}</span></span></th>`).join("")}</tr></thead><tbody>` +
+    sorted.map((r) => `<tr class="${r === d.rec ? "recrow" : ""}"><td><b>${esc(r.p.name)}</b>${r === d.rec ? ' <span class="tag">recommended</span>' : ""}<div class="hint">${esc(r.p.short)}</div></td>
+      <td>${r.passes ? '<span class="yes">Meets all</span>' : `<span class="no">Misses ${r.failed.length}</span>`}</td>
+      ${keys.map((k) => { const c = r.checks.find((x) => x.key === k.key); if (!c) return "<td class='hint num'>—</td>";
+        const ci = k.key === "acc" ? `<div class="hint">${fmtPct(r.accCI[0])}–${fmtPct(r.accCI[1])}</div>` : k.key === "hall" ? `<div class="hint">${fmtPct(r.hallCI[0])}–${fmtPct(r.hallCI[1])}</div>` : "";
+        return `<td class="num ${c.pass ? "" : "missed"}">${c.pass ? "✓" : "✗"} ${c.value}${c.fix === "borderline" ? ' <span class="pill">borderline</span>' : ""}${ci}</td>`; }).join("")}</tr>`).join("") + "</tbody>";
+}
+
+function renderWhyNot(rows, d) {
+  const others = rows.filter((r) => r !== d.rec);
+  $("#whynot").innerHTML = `<ul class="facts">${others.map((r) => {
+    if (r.passes) return `<li><b>${esc(r.p.name)}</b> meets every requirement too, but costs ${fmt$(r.monthly)}/month vs ${fmt$(d.rec.monthly)}${r.p95 < d.rec.p95 ? ` (it is faster: p95 ${fmtMs(r.p95)})` : ""}.</li>`;
+    const cacheNote = r.badCache ? ` ${r.badCache} wrong answer${r.badCache > 1 ? "s" : ""} came from the similarity cache matching a different question. Test cases that share long reference text look alike to it, so scope the cache per question or raise its threshold.` : "";
+    return `<li><b>${esc(r.p.name)}</b> misses ${r.failed.map((f) => `${f.label.toLowerCase()}: ${f.value} vs ${f.target}`).join("; ")}.${cacheNote}</li>`;
+  }).join("")}</ul>`;
+}
+
+function renderDrill() {
+  const items = RUN.meta.items, ids = RUN.meta.paths;
+  let h = `<thead><tr><th>Test case</th>${ids.map((id) => `<th>${esc(pathInfo(id).name)}</th>`).join("")}</tr></thead><tbody>`;
+  items.forEach((it, i) => {
+    const c0 = RUN.cases[i] || {};
+    h += `<tr><td style="white-space:normal;min-width:240px">${esc((c0.input || it.q).slice(0, 140))}<div class="hint">expected: ${esc(c0.expected || "—")}</div></td>`;
+    ids.forEach((id) => {
+      const c = RUN.calls.find((x) => x.path === id && x.qid === it.id);
+      if (!c) { h += "<td class='hint'>—</td>"; return; }
+      const mark = c.error ? "⚠" : c.hallucinated ? "⚠" : c.correct ? "✓" : c.correct === false ? "✗" : "";
+      h += `<td class="${c.error || c.correct === false ? "cell-bad" : c.correct ? "cell-ok" : ""}" title="${esc(c.error || c.answer)} · confidence ${c.confidence ?? "—"} · ${esc(c.model)}">${mark} ${esc(String(c.error ? "error" : c.answer).slice(0, 22))}
+        <span class="hint">${fmtMs(c.latency_ms)}</span>${c.decided_by === "jev" ? '<span class="pill">Jev</span>' : ""}${c.routed_to ? '<span class="pill">↘</span>' : ""}</td>`;
+    });
+    h += "</tr>";
+  });
+  $("#drill").innerHTML = h + "</tbody>";
+}
+
+// ---------------------------------------------------------------- decision record
+function downloadADR() {
+  const { rows, decision: d, strength: st, req } = RUN, r = d.rec, today = new Date().toISOString().slice(0, 10);
+  const sim = RUN.calls.some((c) => c.simulated);
+  const line = (x) => `| ${x.p.name} | ${x.passes ? "Meets all" : "Misses " + x.failed.length} | ${fmtPct(x.acc)} (${fmtPct(x.accCI[0])}–${fmtPct(x.accCI[1])}) | ${fmtPct(x.hallRate)} | ${fmtMs(x.p50)} / ${fmtMs(x.p95)} | ${fmt$(x.perReq * 1000)} | ${fmt$(x.monthly)} |`;
+  const md = `# ADR: Architecture for "${RUN.goal || "unnamed agent"}"
+
+- **Date:** ${today}
+- **Status:** Proposed
+- **Recommended pattern:** ${r.p.name}${r.p.name === r.p.chain.join(" → ") ? "" : ` (${r.p.chain.join(" → ")})`}
+- **Evidence strength:** ${st.label}. ${st.why}
+
+## Context
+
+${RUN.goal || "(no goal given)"}
+
+Requirements:
+- Accuracy ≥ ${fmtPct(req.minAcc)}; hallucination rate ≤ ${fmtPct(req.maxHall)}
+- 95% of requests within ${fmtMs(req.p95)}
+- Monthly budget ${fmt$(req.budget)} at ${req.rpd.toLocaleString()} requests/day, ${Math.round(req.repeat * 100)}% repeat requests
+- Personal data: ${req.pii ? "yes, redaction required" : "no"} · Memory/tools: ${req.memory ? "required" : "not needed"} · Provider failover: ${req.uptime ? "required" : "not needed"}
+
+Evaluated ${rows.length} patterns on ${r.n} graded test cases with ${modelInfo(RUN.body.model).label} as the main model.
+Model calls were ${sim ? "**simulated** (indicative only; re-run with API keys before final sign-off)" : "live"}.
+
+## Decision
+
+${d.met ? `Use **${r.p.name}**. It is the ${d.passing.length > 1 ? "cheapest of the " + d.passing.length + " patterns that meet" : "only pattern that meets"} every requirement.`
+    : `No pattern met every requirement. The closest is **${r.p.name}**, which misses: ${r.failed.map((f) => `${f.label} (${f.value} vs ${f.target})`).join(", ")}. ${suggest(r)}`}
+
+## Evidence
+
+| Pattern | Verdict | Accuracy (95% CI) | Hallucinations | Latency p50 / p95 | Cost per 1K | Monthly |
+|---|---|---|---|---|---|---|
+${[...rows].sort((a, b) => b.passes - a.passes || a.monthly - b.monthly).map(line).join("\n")}
+
+Accuracy and hallucinations are measured on the test cases. Latency is measured per request. Monthly cost is projected from measured token use,
+traffic and repeat rate. PII redaction, memory and failover are capabilities of the pattern.
+
+## Alternatives considered
+
+${rows.filter((x) => x !== r).map((x) => `- **${x.p.name}:** ${x.passes ? `meets all requirements but costs ${fmt$(x.monthly)}/month` : "misses " + x.failed.map((f) => `${f.label.toLowerCase()} (${f.value} vs ${f.target})`).join("; ")}.`).join("\n")}
+
+## Consequences and next steps
+
+${(HOWTO[r.id] || []).map((s) => `- ${s}`).join("\n")}
+- Keep the ${RUN.cases.length} test cases as a regression suite and re-run this evaluation before prompt or model changes.
+`;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([md], { type: "text/markdown" }));
+  a.download = `ADR-${(RUN.goal || "agent").toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40)}.md`;
+  a.click(); URL.revokeObjectURL(a.href);
+}
+
+addEventListener("resize", () => { if (RUN && RUN.rows) renderScatter(RUN.rows, RUN.decision); });
+</script>
+</body>
+</html>

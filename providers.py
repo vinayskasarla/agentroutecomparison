@@ -13,7 +13,7 @@ import time
 import anthropic
 import httpx
 
-from catalog import JEV, MODEL_BY_ID, PROVIDERS, SIM_PROFILE, SIM_RIGHT, SIM_WRONG, SUITE
+from catalog import JEV, MODEL_BY_ID, PROVIDERS, SIM_PROFILE
 
 # Secrets created by the Terraform setup start as this placeholder until you store a real value.
 # Treat them as unset so that provider runs in simulated mode instead of failing auth.
@@ -52,11 +52,11 @@ def parse_answer(text: str):
     return (text or "").strip()[:200], None
 
 
-async def call_llm(model_id: str, prompt: str, *, qid=None, extra_context_tokens=0,
+async def call_llm(model_id: str, prompt: str, *, item=None, extra_context_tokens=0,
                    force_sim=False, seed=0):
     provider = MODEL_BY_ID[model_id]["provider"]
     if force_sim or not has_key(provider):
-        return simulate(model_id, prompt, qid=qid, extra_context_tokens=extra_context_tokens, seed=seed)
+        return simulate(model_id, prompt, item=item, extra_context_tokens=extra_context_tokens, seed=seed)
     start = time.perf_counter()
     try:
         if provider == "anthropic":
@@ -120,15 +120,17 @@ async def _call_gemini(model_id, prompt):
     return "".join(p.get("text", "") for p in parts), usage.get("promptTokenCount", 0), out
 
 
-def simulate(model_id, prompt, *, qid=None, extra_context_tokens=0, seed=0):
-    """Deterministic stand-in for a model call (no sleeping — latency is reported, not waited)."""
+def simulate(model_id, prompt, *, item=None, extra_context_tokens=0, seed=0):
+    """Deterministic stand-in for a model call (no sleeping — latency is reported, not waited).
+
+    `item` is a graded test case ({difficulty, sim_right, sim_wrong}); without one the answer is a placeholder.
+    """
     prof = SIM_PROFILE[model_id]
     digest = hashlib.sha256(f"{model_id}|{prompt}|{seed}".encode()).hexdigest()
     rng = random.Random(int(digest[:12], 16))
-    item = next((s for s in SUITE if s["id"] == qid), None)
-    if item:
+    if item and item.get("sim_right") is not None:
         correct = rng.random() < prof["skill"][item["difficulty"]]
-        answer = SIM_RIGHT[qid] if correct else SIM_WRONG[qid]
+        answer = item["sim_right"] if correct else item["sim_wrong"]
         confidence = rng.randint(82, 99) if correct else rng.randint(58, 92)  # models are over-confident when wrong
     else:
         answer = "(simulated answer — add an API key to see real output)"

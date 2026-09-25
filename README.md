@@ -14,7 +14,9 @@ Pick a model from a dropdown: GPT (OpenAI), Claude (Anthropic), Grok (xAI) or Ge
 | Redis cache | Agent → Redis → LLM | An exact-match response cache |
 | Jev only | Agent → Jev | [Jev](https://typesafe.ai), TypeSafe AI's "System One" model, answers as a typed `choice` with calibrated probabilities, picking from candidate answers. It doesn't write text. |
 | Jev → LLM cascade | Agent → Jev → (unsure) LLM | Jev answers when its confidence clears a threshold (default 0.8); anything else escalates to the LLM. With a free-form prompt, Jev picks the small or large model tier instead. |
+| Direct · small model | Agent → small LLM | The provider's small model, called directly. Shows whether the task needs the big one. |
 | AI Gateway | Agent → AI Gateway → LLM | Central keys, quotas, guardrails, cost metering and provider failover |
+| AI Gateway → Jev → LLM | Agent → AI Gateway → Jev → LLM if unsure | The gateway's controls, plus Jev answering fixed-answer decisions when it's confident. Free-text requests use Jev to pick the model tier. |
 | Agent Runtime → AI Gateway → LLM | Agent Runtime → AI Gateway → LLM | The **enablement platform** and candidate company standard. The runtime adds memory, policy and tracing, plus injected context tokens. The gateway adds exact and similar-question caching, and uses Jev to route each request to the small or large model. |
 
 ## What's real and what's modeled
@@ -33,9 +35,23 @@ Pick a model from a dropdown: GPT (OpenAI), Claude (Anthropic), Grok (xAI) or Ge
   difficulty. The UI always shows which mode ran.
 - **Provider outages** are injected faults at the LLM step, so you can see which routes survive them.
 
-## Two pages
+## Three pages
 
-- **Benchmark** (`/`): runs the graded eval suite, or your own prompt, through every route with replays, and
+- **Architecture advisor** (`/`): for a team planning an agent. Describe the task, set hard requirements
+  (accuracy, hallucination rate, 95th-percentile latency, monthly budget, traffic, repeat rate, personal data,
+  memory/tools, failover) and give test cases with expected answers. Starter packs cover ticket routing,
+  answering from documents, field extraction and a general assistant. Every candidate pattern runs on your
+  cases. The page then recommends the cheapest pattern that meets every requirement, or the closest one and
+  what to change. The evidence includes 95% confidence intervals and is labelled *measured*, *projected* or
+  *capability*. There's also an accuracy-vs-cost chart, build steps, a "why not the others" list and a
+  downloadable decision record (ADR, Markdown).
+  - **Hallucination** means a wrong answer given as if it were right: a made-up answer to a question whose
+    expected answer is `unknown`, an answer outside the allowed labels, or a wrong answer stated with at
+    least 70% confidence.
+  - **Evidence strength** is *weak* under 15 graded cases, *moderate* at 15–39 and *strong* at 40 or more.
+    It is always *indicative* when model calls are simulated.
+
+- **Benchmark** (`/benchmark`): runs the graded eval suite, or your own prompt, through every route with replays, and
   ranks the routes on accuracy, cost, latency, confidence, reliability and governance.
 - **Ask a question** (`/ask`): type one question in plain English. It runs once through each route and
   shows that single request's answer, time per step, cost, confidence, tokens, the model that actually

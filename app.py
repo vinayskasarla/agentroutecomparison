@@ -141,7 +141,7 @@ async def llm_stage(model, prompt, ctx, extra_tokens=0, failover=False):
             return ({"error": "provider 503 (injected fault)", "answer": "", "confidence": None,
                      "in_tokens": 0, "out_tokens": 0, "model": model, "simulated": True},
                     stages, (time.perf_counter() - t0) * 1000)
-        res = await call_llm(attempt_model, prompt, qid=ctx["qid"], extra_context_tokens=extra_tokens,
+        res = await call_llm(attempt_model, prompt, item=graded_item(ctx), extra_context_tokens=extra_tokens,
                              force_sim=ctx["force_sim"], seed=ctx["pass"])
         stages.append({"name": f"LLM · {attempt_model}", "kind": "llm", "ms": res["llm_ms"],
                        "simulated": res["simulated"]})
@@ -161,8 +161,10 @@ async def hop(url, body, rtt_ms):
     return payload, max(0.0, wall - payload["internal_ms"])
 
 
-def suite_item(qid):
-    return next((s for s in catalog.SUITE if s["id"] == qid), None)
+def graded_item(ctx):
+    """The test case this call belongs to, or None for an ungraded free-form prompt."""
+    item = ctx.get("item")
+    return item if item and item.get("accept") else None
 
 
 def jev_stage(label, r):
@@ -171,7 +173,7 @@ def jev_stage(label, r):
 
 async def jev_route(model, prompt, ctx):
     """Ask Jev whether the provider's small model is enough. Returns (model_to_use, stage, jev_tokens)."""
-    item = suite_item(ctx["qid"])
+    item = graded_item(ctx)
     needs_large = item["difficulty"] >= 2 if item else is_complex(prompt)
     r = await call_jev(prompt, ROUTE_QUESTION, truth={"route": "large" if needs_large else "small"},
                        force_sim=ctx["force_sim"], seed=ctx["pass"])
@@ -222,8 +224,29 @@ async def svc_gateway(req: SvcReq):
             return {"result": {**hit, "in_tokens": 0, "out_tokens": 0}, "stages": stages,
                     "internal_ms": (time.perf_counter() - t0) * 1000, **info}
 
+    if f.get("jev_first"):
+        item = graded_item(ctx)
+        if item and item.get("options"):  # a decision with fixed answers: let Jev take it if it's confident
+            r = await call_jev(prompt, jev_answer_question(item["options"]), truth={"answer": item["sim_right"]},
+                               difficulty=item["difficulty"], force_sim=ctx["force_sim"], seed=ctx["pass"])
+            info["jev_in_tokens"] = r["in_tokens"]
+            if r["error"]:
+                stages.append(jev_stage("Jev error → LLM", r))
+            else:
+                a = r["answers"]["answer"]
+                stages.append(jev_stage(f"Jev · choice {a['choice']} ({a['confidence']:.2f})", r))
+                if a["confidence"] >= ctx["jev_threshold"]:
+                    return {"result": {"answer": a["choice"], "confidence": a["confidence"] * 100, "in_tokens": 0,
+                                       "out_tokens": 0, "model": r["model"], "simulated": r["simulated"]},
+                            "stages": stages, "internal_ms": (time.perf_counter() - t0) * 1000, **info,
+                            "decided_by": "jev"}
+                info["escalated"] = True
+        else:  # free text: Jev can't answer it, so it picks the model tier instead
+            f = {**f, "router": True}
+
     if f.get("router"):
-        model, stage, info["jev_in_tokens"] = await jev_route(req.model, prompt, ctx)
+        model, stage, jev_tokens = await jev_route(req.model, prompt, ctx)
+        info["jev_in_tokens"] += jev_tokens
         stages.append(stage)
         info["routed_to"] = model if model != req.model else None
 
@@ -265,9 +288,11 @@ async def svc_runtime(req: SvcReq):
 async def run_path(path_id, model, prompt, ctx):
     rtt = ctx["hop_rtt_ms"]
     body = {"model": model, "prompt": prompt, "ctx": ctx}
-    if path_id == "direct":
-        res, stages, _ = await llm_stage(model, prompt, ctx)
-        return {"result": res, "stages": stages, "pii_redacted": 0, "pii_sent": bool(redact(prompt)[1])}
+    if path_id in ("direct", "direct_small"):
+        use = catalog.PROVIDERS[catalog.MODEL_BY_ID[model]["provider"]]["small"] if path_id == "direct_small" else model
+        res, stages, _ = await llm_stage(use, prompt, ctx)
+        return {"result": res, "stages": stages, "pii_redacted": 0, "pii_sent": bool(redact(prompt)[1]),
+                "routed_to": use if use != model else None}
     if path_id == "redis":
         c0 = time.perf_counter()
         key = exact_key(f"{ctx['cache_ns']}:redis", model, prompt)
@@ -287,6 +312,7 @@ async def run_path(path_id, model, prompt, ctx):
         return await run_jev_path(path_id, model, prompt, ctx)
     url, features = {
         "gateway": ("/svc/gateway", {}),
+        "gateway_jev": ("/svc/gateway", {"jev_first": True}),
         "platform": ("/svc/runtime", {"cache": True, "semantic": True, "router": True}),
     }[path_id]
     payload, hop_ms = await hop(url, {**body, "features": features}, rtt)
@@ -297,14 +323,14 @@ async def run_path(path_id, model, prompt, ctx):
 
 async def run_jev_path(path_id, model, prompt, ctx):
     pii_sent = bool(redact(prompt)[1])  # Jev is an external API too
-    item = suite_item(ctx["qid"])
-    if not item:  # free-form prompt: Jev can't write the answer, so it picks the model tier instead
+    item = graded_item(ctx)
+    if not item or not item.get("options"):  # Jev can't write text, so it picks the model tier instead
         use, stage, jev_tokens = await jev_route(model, prompt, ctx)
         res, llm_stages, _ = await llm_stage(use, prompt, ctx)
         return {"result": res, "stages": [stage] + llm_stages, "jev_in_tokens": jev_tokens,
                 "routed_to": use if use != model else None, "pii_sent": pii_sent}
-    r = await call_jev(prompt, jev_answer_question(catalog.OPTIONS[item["id"]]),
-                       truth={"answer": catalog.SIM_RIGHT[item["id"]]}, difficulty=item["difficulty"],
+    r = await call_jev(prompt, jev_answer_question(item["options"]),
+                       truth={"answer": item["sim_right"]}, difficulty=item["difficulty"],
                        force_sim=ctx["force_sim"], seed=ctx["pass"])
     if r["error"]:
         stages = [jev_stage("Jev error", r)]
@@ -326,7 +352,46 @@ async def run_jev_path(path_id, model, prompt, ctx):
 
 def grade(answer, accept):
     ans = (answer or "").lower()
-    return any(re.search(r"(?<![\w.])" + re.escape(a) + r"(?![\w])", ans) for a in accept)
+    return any(re.search(r"(?<![\w.])" + re.escape(a.lower()) + r"(?![\w])", ans) for a in accept)
+
+
+def hallucinated(item, answer, confidence, correct):
+    """A wrong answer given as if it were right: made up for an unanswerable question, outside the allowed
+    labels, or stated with at least 70% confidence."""
+    if not item or not item.get("accept") or correct is None or correct:
+        return None if correct is None else False
+    if item.get("unanswerable"):
+        return True
+    if item.get("options") and not grade(answer, item["options"]):
+        return True
+    return confidence is not None and confidence >= 70
+
+
+def normalize_items(raw):
+    """Turn user test cases into graded items the simulator and Jev can use."""
+    items = []
+    for i, r in enumerate(raw[:60]):
+        text = str(r.get("input", "")).strip()
+        expected = str(r.get("expected", "")).strip()
+        if not text:
+            continue
+        options = [str(o).strip() for o in (r.get("options") or []) if str(o).strip()] or None
+        unanswerable = expected.lower() in catalog.UNKNOWN_ANSWERS
+        accept = (catalog.UNKNOWN_ANSWERS if unanswerable else [a.strip() for a in expected.split("|") if a.strip()]) or None
+        prompt = text + (f"\n\nAnswer with exactly one of: {', '.join(options)}." if options else "")
+        if unanswerable or (accept and r.get("grounded")):
+            difficulty = 3 if unanswerable else 2
+        else:
+            difficulty = 1 if options and len(text.split()) < 60 else (2 if is_complex(text) else 1)
+        if options and accept:
+            right = next((o for o in options if o.lower() == accept[0].lower()), accept[0])
+            wrong = next((o for o in options if o.lower() != right.lower()), "other")
+        else:
+            right = "unknown" if unanswerable else (accept[0] if accept else None)
+            wrong = "(simulated made-up answer)" if unanswerable else "(simulated wrong answer)"
+        items.append({"id": f"e{i + 1}", "q": prompt, "input": text, "accept": accept, "options": options,
+                      "difficulty": difficulty, "sim_right": right, "sim_wrong": wrong, "unanswerable": unanswerable})
+    return items
 
 
 class RunReq(BaseModel):
@@ -339,6 +404,7 @@ class RunReq(BaseModel):
     fault_rate: float = 0.0
     assumptions: dict = {}
     cache_scope: str = ""  # set by the Ask page so caches persist across questions in one browser session
+    items: list = []  # workload "examples": [{input, expected, options?, grounded?}] from the Architecture Advisor
 
 
 @app.post("/api/run")
@@ -347,15 +413,24 @@ async def api_run(req: RunReq):
     run_id = uuid.uuid4().hex[:8]
     scope = re.sub(r"[^a-zA-Z0-9]", "", req.cache_scope)[:32]
     cache_ns = f"s{scope}" if scope else run_id
-    items = catalog.SUITE if req.workload == "suite" else [{"id": "custom", "q": req.prompt, "accept": None}]
+    if req.workload == "suite":
+        items = catalog.suite_items()
+    elif req.workload == "examples":
+        items = normalize_items(req.items)
+    else:
+        items = [{"id": "custom", "q": req.prompt, "accept": None}]
+    if not items:
+        items = [{"id": "custom", "q": req.prompt or "Hello", "accept": None}]
     queue: asyncio.Queue = asyncio.Queue()
     live = has_key(catalog.MODEL_BY_ID[req.model]["provider"]) and not req.force_sim
-    paths = [p for p in req.paths if not (p == "jev" and req.workload != "suite")]  # Jev alone can't write free text
+    # Jev alone can only pick from options, so it's a candidate only when every test case has them
+    paths = [p for p in req.paths if not (p == "jev" and not all(i.get("options") and i.get("accept") for i in items))]
 
     async def worker(path_id):
         for pas in range(1, max(1, min(req.passes, 5)) + 1):
             for item in items:
                 ctx = {"run_id": run_id, "cache_ns": cache_ns, "path": path_id, "qid": item["id"], "pass": pas,
+                       "item": item,
                        "app_id": "demo-app", "force_sim": req.force_sim, "fault_rate": req.fault_rate,
                        "hop_rtt_ms": float(a["hop_rtt_ms"]), "semantic_threshold": float(a["semantic_threshold"]),
                        "runtime_context_tokens": int(a["runtime_context_tokens"]),
@@ -365,10 +440,13 @@ async def api_run(req: RunReq):
                 except Exception as exc:
                     out = {"result": {"error": f"{type(exc).__name__}: {exc}"[:200]}, "stages": []}
                 res = out["result"]
+                correct = (grade(res.get("answer"), item["accept"])
+                           if item.get("accept") and not res.get("error") else None)
                 await queue.put({
                     "type": "call", "path": path_id, "qid": item["id"], "pass": pas,
                     "answer": res.get("answer", ""), "confidence": res.get("confidence"),
-                    "correct": (grade(res.get("answer"), item["accept"]) if item["accept"] and not res.get("error") else None),
+                    "correct": correct,
+                    "hallucinated": hallucinated(item, res.get("answer"), res.get("confidence"), correct),
                     "error": res.get("error"), "model": res.get("model", req.model),
                     "in_tokens": res.get("in_tokens", 0), "out_tokens": res.get("out_tokens", 0),
                     "simulated": res.get("simulated", True), "failover": res.get("failover", False),
@@ -415,7 +493,12 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 
 @app.get("/")
-async def index():
+async def advisor_page():
+    return FileResponse(os.path.join(STATIC, "advisor.html"))
+
+
+@app.get("/benchmark")
+async def benchmark_page():
     return FileResponse(os.path.join(STATIC, "index.html"))
 
 
