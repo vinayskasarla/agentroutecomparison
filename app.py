@@ -20,6 +20,7 @@ import uuid
 import httpx
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import catalog
@@ -194,7 +195,7 @@ class SvcReq(BaseModel):
 async def svc_gateway(req: SvcReq):
     t0 = time.perf_counter()
     f, ctx = req.features, req.ctx
-    ns = f"{ctx['run_id']}:{ctx['path']}"
+    ns = f"{ctx['cache_ns']}:{ctx['path']}"
     if not rate_limit_ok(ctx["app_id"]):
         return {"result": {"error": "429 quota exceeded"}, "stages": [], "internal_ms": 0}
     prompt, pii = redact(req.prompt)
@@ -233,7 +234,9 @@ async def svc_gateway(req: SvcReq):
     if f.get("cache") and not res.get("error"):
         payload = {k: res[k] for k in ("answer", "confidence", "model", "simulated")}
         await kv_set(exact_key(ns, req.model, prompt), payload)
-        _semantic_index.setdefault(ns, []).append((tokens(prompt), payload))
+        index = _semantic_index.setdefault(ns, [])
+        index.append((tokens(prompt), payload))
+        del index[:-500]  # keep long-lived (Ask page) namespaces bounded
     # output guardrail + usage metering for charge-back
     redact(res.get("answer", ""))
     stages.append({"name": "Gateway: output guard + metering", "kind": "gateway",
@@ -267,7 +270,7 @@ async def run_path(path_id, model, prompt, ctx):
         return {"result": res, "stages": stages, "pii_redacted": 0, "pii_sent": bool(redact(prompt)[1])}
     if path_id == "redis":
         c0 = time.perf_counter()
-        key = exact_key(f"{ctx['run_id']}:redis", model, prompt)
+        key = exact_key(f"{ctx['cache_ns']}:redis", model, prompt)
         hit = await kv_get(key)
         stages = [{"name": "Redis GET" + (" (HIT)" if hit else " (miss)"), "kind": "cache",
                    "ms": (time.perf_counter() - c0) * 1000}]
@@ -335,12 +338,15 @@ class RunReq(BaseModel):
     force_sim: bool = False
     fault_rate: float = 0.0
     assumptions: dict = {}
+    cache_scope: str = ""  # set by the Ask page so caches persist across questions in one browser session
 
 
 @app.post("/api/run")
 async def api_run(req: RunReq):
     a = {**catalog.DEFAULT_ASSUMPTIONS, **req.assumptions}
     run_id = uuid.uuid4().hex[:8]
+    scope = re.sub(r"[^a-zA-Z0-9]", "", req.cache_scope)[:32]
+    cache_ns = f"s{scope}" if scope else run_id
     items = catalog.SUITE if req.workload == "suite" else [{"id": "custom", "q": req.prompt, "accept": None}]
     queue: asyncio.Queue = asyncio.Queue()
     live = has_key(catalog.MODEL_BY_ID[req.model]["provider"]) and not req.force_sim
@@ -349,7 +355,7 @@ async def api_run(req: RunReq):
     async def worker(path_id):
         for pas in range(1, max(1, min(req.passes, 5)) + 1):
             for item in items:
-                ctx = {"run_id": run_id, "path": path_id, "qid": item["id"], "pass": pas,
+                ctx = {"run_id": run_id, "cache_ns": cache_ns, "path": path_id, "qid": item["id"], "pass": pas,
                        "app_id": "demo-app", "force_sim": req.force_sim, "fault_rate": req.fault_rate,
                        "hop_rtt_ms": float(a["hop_rtt_ms"]), "semantic_threshold": float(a["semantic_threshold"]),
                        "runtime_context_tokens": int(a["runtime_context_tokens"]),
@@ -385,8 +391,9 @@ async def api_run(req: RunReq):
                 yield json.dumps(await asyncio.wait_for(queue.get(), 0.2)) + "\n"
             except asyncio.TimeoutError:
                 continue
-        for ns in [k for k in _semantic_index if k.startswith(run_id)]:
-            del _semantic_index[ns]
+        if not scope:
+            for ns in [k for k in _semantic_index if k.startswith(run_id)]:
+                del _semantic_index[ns]
         yield json.dumps({"type": "done"}) + "\n"
 
     return StreamingResponse(stream(), media_type="application/x-ndjson")
@@ -403,6 +410,15 @@ async def api_config():
     }
 
 
+STATIC = os.path.join(os.path.dirname(__file__), "static")
+app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+
 @app.get("/")
 async def index():
-    return FileResponse(os.path.join(os.path.dirname(__file__), "static", "index.html"))
+    return FileResponse(os.path.join(STATIC, "index.html"))
+
+
+@app.get("/ask")
+async def ask_page():
+    return FileResponse(os.path.join(STATIC, "ask.html"))

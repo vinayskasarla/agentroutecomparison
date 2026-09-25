@@ -33,6 +33,15 @@ Pick a model from a dropdown: GPT (OpenAI), Claude (Anthropic), Grok (xAI) or Ge
   difficulty. The UI always shows which mode ran.
 - **Provider outages** are injected faults at the LLM step, so you can see which routes survive them.
 
+## Two pages
+
+- **Benchmark** (`/`): runs the graded eval suite, or your own prompt, through every route with replays, and
+  ranks the routes on accuracy, cost, latency, confidence, reliability and governance.
+- **Ask a question** (`/ask`): type one question in plain English. It runs once through each route and
+  shows that single request's answer, time per step, cost, confidence, tokens, the model that actually
+  answered, and flags for cache hits, Jev decisions, routing, failover and PII. Asking the same question
+  again shows the caches answering. Every question you ask is kept in a table on the page.
+
 ## Metrics
 
 Accuracy is scored against a 10-question eval suite with known answers. Confidence is self-reported by the

@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ask a Question · LLM Path Lab</title>
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>LLM Path Lab</h1>
+      <p class="sub">Ask one question in plain English. It runs once through each route, and you see what <b>that single request</b>
+        cost, how long each step took, how confident the answer is, and which model actually answered.</p>
+      <nav class="tabs"><a href="/">Benchmark</a><a href="/ask" class="on">Ask a question</a></nav>
+    </div>
+    <button class="ghost" id="theme" title="Toggle light / dark">◐ Theme</button>
+  </header>
+
+  <section class="card">
+    <h2>Your question</h2>
+    <textarea id="q" class="askbox" placeholder="e.g. A customer says they were charged twice for order #4411. What should the support agent do next?"></textarea>
+    <div class="examples" id="examples"></div>
+    <div class="askgrid">
+      <div class="field">
+        <label class="l" for="model">Model</label>
+        <select id="model"></select>
+        <div id="keychip"></div><div id="jevchip"></div>
+      </div>
+      <div class="field">
+        <label class="l">Routes</label>
+        <div class="routechips" id="routes"></div>
+        <div class="hint">"Jev only" is left out here: Jev returns decisions, not written answers.</div>
+      </div>
+      <div class="field">
+        <label class="l">Scenario</label>
+        <label class="check"><input type="checkbox" id="fault"> <span>Simulate a provider outage on this request</span></label>
+        <label class="check"><input type="checkbox" id="forceSim"> <span>Force simulation (no API spend)</span></label>
+        <label class="l" for="rpd" style="margin-top:10px">Requests per day like this one</label>
+        <input type="number" id="rpd" value="100000" step="1000">
+      </div>
+    </div>
+    <div class="runrow">
+      <button class="primary" id="ask">Ask</button>
+      <button class="ghost" id="again" disabled title="Send the same question again — cached routes should now answer instantly">↻ Ask the same question again</button>
+      <span class="hint" id="status">Ready.</span>
+    </div>
+  </section>
+
+  <section id="results" class="hidden">
+    <div class="banner" id="banner"></div>
+    <div class="tiles" id="tiles"></div>
+
+    <div class="routecards" id="cards"></div>
+
+    <div class="two">
+      <section class="card chart">
+        <h2>Time for this request</h2>
+        <p class="hint" style="margin:0">Split by step. Hover a segment for detail.</p>
+        <div class="legend" id="latLegend"></div>
+        <div id="latChart"></div>
+      </section>
+      <section class="card chart">
+        <h2>Cost of 1,000 requests like this</h2>
+        <p class="hint" style="margin:0">This request's tokens and platform cost, times 1,000.</p>
+        <div class="legend"><span><i style="background:var(--s1)"></i>Model tokens (LLM + Jev)</span><span><i style="background:var(--s2)"></i>Platform infra</span></div>
+        <div id="costChart"></div>
+      </section>
+    </div>
+
+    <section class="card">
+      <h2>Questions asked this session</h2>
+      <p class="hint">Latency and cost per route. Ask a question twice to watch the cached routes drop to near-zero.</p>
+      <div class="tablewrap"><table id="history"></table></div>
+    </section>
+  </section>
+</main>
+<div id="tip"></div>
+
+<script src="/static/common.js"></script>
+<script>
+const EXAMPLES = [
+  "A customer says they were charged twice for order #4411. What should the support agent do next?",
+  "Summarise the difference between a refund and a chargeback in two sentences.",
+  "Hi, I'm Jane (jane.roe@acme.com, card 4111 1111 1111 1111). Can you tell me why my payment failed?",
+  "What is 15% of 240?",
+];
+const WEIGHTS = { cost: 35, speed: 30, governance: 35 };
+let CFG, HIST = [], LAST = null, CUR = null;
+let scope = Math.random().toString(36).slice(2, 12);
+try { scope = sessionStorage.getItem("plab-scope") || scope; sessionStorage.setItem("plab-scope", scope); } catch (e) {}
+
+$("#examples").innerHTML = EXAMPLES.map((e) => `<button class="ex" type="button">${esc(e)}</button>`).join("");
+$("#examples").onclick = (e) => { const b = e.target.closest(".ex"); if (b) { $("#q").value = b.textContent; $("#q").focus(); } };
+
+fetch("/api/config").then((r) => r.json()).then((cfg) => {
+  CFG = cfg;
+  for (const [pid, p] of Object.entries(cfg.providers)) {
+    const g = document.createElement("optgroup"); g.label = p.label;
+    cfg.models.filter((m) => m.provider === pid).forEach((m) => {
+      const o = document.createElement("option"); o.value = m.id; o.textContent = `${m.label}  ·  $${m.in} / $${m.out}`; g.appendChild(o);
+    });
+    $("#model").appendChild(g);
+  }
+  $("#model").value = "claude-sonnet-5";
+  $("#model").onchange = keyChip; $("#forceSim").onchange = keyChip; keyChip();
+  $("#routes").innerHTML = cfg.paths.filter((p) => p.id !== "jev").map((p) =>
+    `<label class="rchip"><input type="checkbox" checked data-path="${p.id}"> ${esc(p.name)}</label>`).join("");
+});
+
+function modelInfo(id) { return CFG.models.find((m) => m.id === id); }
+function pathInfo(id) { return CFG.paths.find((p) => p.id === id); }
+function keyChip() {
+  const m = modelInfo($("#model").value), p = CFG.providers[m.provider], sim = $("#forceSim").checked;
+  $("#keychip").innerHTML = CFG.keys[m.provider] && !sim
+    ? `<span class="chip"><i class="dot" style="background:var(--good)"></i>Live · ${p.env} found</span>`
+    : `<span class="chip"><i class="dot" style="background:var(--muted)"></i>Simulated · ${CFG.keys[m.provider] ? "forced" : "set " + p.env + " for live"}</span>`;
+  $("#jevchip").innerHTML = CFG.jev.has_key && !sim
+    ? `<span class="chip"><i class="dot" style="background:var(--good)"></i>Jev live</span>`
+    : `<span class="chip"><i class="dot" style="background:var(--muted)"></i>Jev simulated</span>`;
+}
+
+$("#ask").onclick = () => ask($("#q").value.trim());
+$("#again").onclick = () => LAST && ask(LAST);
+$("#q").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) ask($("#q").value.trim()); });
+
+async function ask(question) {
+  if (!question) { $("#q").focus(); return; }
+  const paths = [...document.querySelectorAll("[data-path]:checked")].map((i) => i.dataset.path);
+  if (!paths.length) return alert("Pick at least one route.");
+  const body = { model: $("#model").value, workload: "custom", prompt: question, passes: 1, paths,
+    force_sim: $("#forceSim").checked, fault_rate: $("#fault").checked ? 1 : 0, cache_scope: scope,
+    assumptions: { requests_per_day: +$("#rpd").value } };
+  CUR = { question, body, calls: [], meta: null, n: HIST.filter((h) => h.question === question).length + 1 };
+  $("#ask").disabled = $("#again").disabled = true; $("#status").textContent = "Asking…";
+  try {
+    const resp = await fetch("/api/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const reader = resp.body.getReader(), dec = new TextDecoder(); let buf = "";
+    while (true) {
+      const { value, done } = await reader.read(); if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl; while ((nl = buf.indexOf("\n")) >= 0) {
+        const ev = JSON.parse(buf.slice(0, nl)); buf = buf.slice(nl + 1);
+        if (ev.type === "meta") CUR.meta = ev;
+        if (ev.type === "call") { CUR.calls.push(ev); render(); }
+      }
+      if (CUR.meta) $("#status").textContent = `${CUR.calls.length} / ${CUR.meta.total} routes answered`;
+    }
+    HIST.unshift(CUR); LAST = question; render(); renderHistory();
+    $("#status").textContent = CUR.n > 1 ? `Done · asked ${CUR.n}× this session, so caches may answer` : "Done";
+    $("#results").scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (e) { $("#status").textContent = "Failed: " + e.message; }
+  $("#ask").disabled = false; $("#again").disabled = !LAST;
+}
+
+// ---------- per-call metrics
+function metrics(c, rpd) {
+  const m = modelInfo(c.model) || { in: 0, out: 0 };
+  const tokens = (c.in_tokens * m.in + c.out_tokens * m.out + (c.jev_in_tokens || 0) * CFG.jev.in) / 1e6;
+  const infra = (CFG.assumptions.infra_per_1k[c.path] || 0) / 1000;
+  const byKind = {}; c.stages.forEach((s) => (byKind[s.kind] = (byKind[s.kind] || 0) + s.ms));
+  const overhead = c.stages.filter((s) => s.kind !== "llm" && s.kind !== "error" && !(s.kind === "jev" && c.decided_by === "jev"))
+    .reduce((a, s) => a + s.ms, 0);
+  return { ...c, p: pathInfo(c.path), tokens, infra, cost: tokens + infra, byKind, overhead,
+    monthly: (tokens + infra) * rpd * 30, caps: CFG.path_caps[c.path].length };
+}
+
+function score(rows) {
+  const ok = rows.filter((r) => !r.error); if (!ok.length) return rows;
+  const minCost = Math.min(...ok.map((r) => r.cost)), minLat = Math.min(...ok.map((r) => r.latency_ms));
+  const tot = WEIGHTS.cost + WEIGHTS.speed + WEIGHTS.governance;
+  rows.forEach((r) => {
+    r.score = r.error ? 0 : 100 * (WEIGHTS.cost * (r.cost > 0 ? minCost / r.cost : 1)
+      + WEIGHTS.speed * (r.latency_ms > 0 ? minLat / r.latency_ms : 1)
+      + WEIGHTS.governance * r.caps / CFG.capabilities.length) / tot;
+  });
+  return rows;
+}
+
+function render() {
+  $("#results").classList.remove("hidden");
+  const rows = score(CUR.body.paths.map((id) => CUR.calls.find((c) => c.path === id)).filter(Boolean).map((c) => metrics(c, CUR.body.assumptions.requests_per_day)));
+  const sim = rows.some((r) => r.simulated), m = modelInfo(CUR.body.model);
+  $("#banner").innerHTML = `<b>“${esc(CUR.question.length > 140 ? CUR.question.slice(0, 140) + "…" : CUR.question)}”</b><br>
+    ${esc(m.label)} · model step ${sim ? "<b>simulated</b> (no API key, or forced)" : "<b>live</b>"} · Jev ${CUR.meta && CUR.meta.jev_live ? "<b>live</b>" : "<b>simulated</b>"}
+    · service hops and cache lookups are <b>real and measured</b>${CUR.n > 1 ? ` · asked ${CUR.n}× this session` : ""}${CUR.body.fault_rate ? " · <b>provider outage simulated</b>" : ""}`;
+  renderTiles(rows); renderCards(rows); renderCharts(rows);
+}
+
+function pick(rows, key, dir) {
+  const ok = rows.filter((r) => !r.error && r[key] != null);
+  return ok.length ? ok.reduce((a, b) => (dir > 0 ? b[key] > a[key] : b[key] < a[key]) ? b : a) : null;
+}
+function renderTiles(rows) {
+  const fast = pick(rows, "latency_ms", -1), cheap = pick(rows, "cost", -1), conf = pick(rows, "confidence", 1), top = pick(rows, "score", 1);
+  const t = (k, r, v, cls = "") => `<div class="tile ${cls}"><div class="k">${k}</div><div class="v">${r ? esc(r.p.name) : "—"}</div><div class="d">${v}</div></div>`;
+  $("#tiles").innerHTML =
+    t("Fastest", fast, fast ? fmtMs(fast.latency_ms) : "") +
+    t("Cheapest", cheap, cheap ? `${fmt$(cheap.cost * 1000)} per 1K like this` : "") +
+    t("Most confident", conf, conf ? `${Math.round(conf.confidence)}% ${conf.decided_by === "jev" ? "(Jev, calibrated)" : "(self-rated)"}` : "") +
+    t("Recommended", top, top ? `score ${Math.round(top.score)} / 100 · cost, speed & governance` : "", "best");
+}
+
+function badges(r) {
+  const b = [];
+  if (r.error) b.push(`<span class="badge bad">⚠ ${esc(r.error)}</span>`);
+  if (r.cache) b.push(`<span class="badge">⚡ cache hit (${esc(r.cache)})</span>`);
+  if (r.decided_by === "jev") b.push(`<span class="badge">answered by Jev</span>`);
+  if (r.escalated) b.push(`<span class="badge">Jev unsure → LLM</span>`);
+  if (r.routed_to) b.push(`<span class="badge">↘ routed to ${esc((modelInfo(r.routed_to) || {}).label || r.routed_to)}</span>`);
+  if (r.failover) b.push(`<span class="badge">⟲ failed over to ${esc((modelInfo(r.model) || {}).label || r.model)}</span>`);
+  if (r.pii_redacted) b.push(`<span class="badge good">PII redacted (${r.pii_redacted})</span>`);
+  if (r.pii_sent) b.push(`<span class="badge bad">raw PII sent to provider</span>`);
+  return b.join("");
+}
+
+function renderCards(rows) {
+  const best = { lat: pick(rows, "latency_ms", -1), cost: pick(rows, "cost", -1) };
+  $("#cards").innerHTML = rows.map((r) => {
+    const total = r.stages.reduce((a, s) => a + s.ms, 0) || 1;
+    const segs = r.stages.map((s) => {
+      const st = STAGES.find((x) => x.kind === s.kind) || STAGES[0];
+      return `<i style="flex:${Math.max(s.ms / total, 0.012)};background:${st.color}" data-tip="${esc(s.name)}: ${fmtMs(s.ms)}${s.simulated ? " (simulated)" : ""}"></i>`;
+    }).join("");
+    const used = modelInfo(r.model);
+    const stat = (k, v, win) => `<div class="stat ${win ? "win" : ""}"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+    return `<article class="rcard">
+      <div class="rhead"><div><b>${esc(r.p.name)}</b><div class="hint">${esc(r.p.chain.join(" → "))}</div></div></div>
+      <div class="badges">${badges(r)}</div>
+      <div class="answer">${r.error ? '<span class="hint">No answer: the request failed.</span>' : esc(r.answer) || '<span class="hint">(empty)</span>'}</div>
+      <div class="stats">
+        ${stat("Latency", fmtMs(r.latency_ms), best.lat === r)}
+        ${stat("Cost, this request", fmt$(r.cost), best.cost === r)}
+        ${stat("Confidence", r.confidence == null ? "—" : Math.round(r.confidence) + "%")}
+        ${stat("Tokens in / out", `${r.in_tokens + (r.jev_in_tokens || 0)} / ${r.out_tokens}`)}
+        ${stat("Answered by", r.cache ? "cache" : r.decided_by === "jev" ? "Jev" : used ? esc(used.label) : esc(r.model))}
+        ${stat("Monthly, if all like this", fmt$(r.monthly))}
+      </div>
+      <div class="steps" aria-label="time per step">${segs}</div>
+      <div class="steplist">${r.stages.map((s) => `<span>${esc(s.name)} <b>${fmtMs(s.ms)}</b></span>`).join("")}</div>
+      <div class="hint" style="margin-top:6px">Overhead added by this route: <b>${fmtMs(r.overhead)}</b></div>
+    </article>`;
+  }).join("");
+}
+
+function renderCharts(rows) {
+  const kinds = STAGES.filter((s) => rows.some((r) => r.byKind[s.kind] > 0));
+  $("#latLegend").innerHTML = kinds.map((s) => `<span><i style="background:${s.color}"></i>${s.label}</span>`).join("");
+  hbar($("#latChart"), rows.map((r) => ({ label: r.p.name, vals: r.byKind })), kinds.map((s) => ({ key: s.kind, color: s.color, label: s.label })),
+    fmtMs, (r, s) => s ? `${r.label} · ${s.label}: ${fmtMs(r.vals[s.key])}` : r.label);
+  hbar($("#costChart"), rows.map((r) => ({ label: r.p.name, vals: { tok: r.tokens * 1000, infra: r.infra * 1000 } })),
+    [{ key: "tok", color: "var(--s1)", label: "Model tokens" }, { key: "infra", color: "var(--s2)", label: "Platform infra" }],
+    fmt$, (r, s) => s ? `${r.label} · ${s.label}: ${fmt$(r.vals[s.key])} per 1K` : r.label);
+}
+
+function renderHistory() {
+  const ids = [...new Set(HIST.flatMap((h) => h.body.paths))];
+  $("#history").innerHTML = `<thead><tr><th>Question</th><th>Model</th>${ids.map((id) => `<th>${esc(pathInfo(id).name)}</th>`).join("")}</tr></thead><tbody>` +
+    HIST.map((h) => {
+      const rows = h.calls.map((c) => metrics(c, h.body.assumptions.requests_per_day));
+      const fast = pick(rows, "latency_ms", -1);
+      return `<tr><td style="white-space:normal;min-width:220px">${esc(h.question.length > 90 ? h.question.slice(0, 90) + "…" : h.question)}${h.n > 1 ? ` <span class="pill">#${h.n}</span>` : ""}</td>
+        <td>${esc(modelInfo(h.body.model).label)}</td>${ids.map((id) => {
+          const r = rows.find((x) => x.path === id);
+          if (!r) return "<td class='hint'>—</td>";
+          return `<td class="${r === fast ? "win" : ""}">${r.error ? '<span class="no">error</span>' : fmtMs(r.latency_ms)}<div class="hint">${fmt$(r.cost)}${r.cache ? " ⚡" : ""}${r.decided_by === "jev" ? " · Jev" : ""}</div></td>`;
+        }).join("")}</tr>`;
+    }).join("") + "</tbody>";
+}
+
+addEventListener("resize", () => { if (CUR && CUR.calls.length) render(); });
+</script>
+</body>
+</html>

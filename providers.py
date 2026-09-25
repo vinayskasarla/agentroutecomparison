@@ -17,7 +17,8 @@ from catalog import JEV, MODEL_BY_ID, PROVIDERS, SIM_PROFILE, SIM_RIGHT, SIM_WRO
 
 SYSTEM = (
     "Answer the user's question. Respond with ONLY a JSON object: "
-    '{"answer": "<short final answer>", "confidence": <0-100 integer, how sure you are>}'
+    '{"answer": "<your answer: just the final value for a quiz question, a few sentences otherwise>", '
+    '"confidence": <0-100 integer, how sure you are>}'
 )
 
 _http = httpx.AsyncClient(timeout=90)
