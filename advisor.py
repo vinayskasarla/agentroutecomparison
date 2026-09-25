@@ -26,7 +26,7 @@ LATENCY_BUDGET_MS = {"realtime": 1500, "interactive": 5000, "background": 24 * 3
 PATTERN_KNOWLEDGE = json.load(open(os.path.join(catalog.KNOWLEDGE_DIR, "patterns.json")))
 ARCHITECTURES = PATTERN_KNOWLEDGE["patterns"]
 HARNESS = json.load(open(os.path.join(catalog.KNOWLEDGE_DIR, "harness.json")))
-LOOPING = ("tool_agent", "multi_agent", "workflow", "evaluator_optimizer")
+LOOPING = ("tool_agent", "multi_agent", "workflow", "evaluator_optimizer", "agentic_rag", "router")
 
 # ------------------------------------------------------------------ sample test cases
 POLICY = ("Acme Returns Policy\n- Unused items can be returned within 30 days of delivery for a full refund.\n"
@@ -87,7 +87,9 @@ SPEC_SCHEMA = {
     "additionalProperties": False,
     "required": ["summary", "task_type", "labels", "needs_documents", "document_size", "needs_tools", "needs_memory", "multi_step",
                  "handles_personal_data", "risk", "latency", "requests_per_day", "repeat_rate", "accuracy_target",
-                 "reference_material", "test_cases", "assumptions", "data_class", "needs_images"],
+                 "reference_material", "test_cases", "assumptions", "data_class", "needs_images",
+                 "steps_known", "request_types", "specialists", "multi_hop", "docs_change_often", "structured_data",
+                 "tool_count", "integration"],
     "properties": {
         "summary": {"type": "string", "description": "One sentence restating what the agent must do."},
         "task_type": {"type": "string", "enum": TASK_TYPES},
@@ -103,6 +105,14 @@ SPEC_SCHEMA = {
         "data_class": {"type": "string", "enum": ["public", "internal", "confidential", "regulated"],
                        "description": "Most sensitive data the agent sees: confidential = customer/employee personal data; regulated = health, payment card or financial records."},
         "needs_images": {"type": "boolean", "description": "Inputs include images, scans or screenshots."},
+        "steps_known": {"type": "boolean", "description": "The steps are the same for every request (a fixed sequence could handle it)."},
+        "request_types": {"type": "integer", "description": "How many distinct kinds of request the agent handles that need different handling (1 if uniform)."},
+        "specialists": {"type": "boolean", "description": "Hands work to specialist sub-agents or clearly separate domains."},
+        "multi_hop": {"type": "boolean", "description": "Answers must combine several documents or sources, or need a follow-up search."},
+        "docs_change_often": {"type": "boolean", "description": "The documents change daily or more often."},
+        "structured_data": {"type": "boolean", "description": "Facts it needs live in databases or tables rather than documents."},
+        "tool_count": {"type": "integer", "description": "Roughly how many distinct APIs/tools the agent calls (0 if none)."},
+        "integration": {"type": "string", "enum": ["direct", "mcp", "both"], "description": "How tools are connected: direct function tools, MCP servers, or both. direct unless MCP is mentioned."},
         "risk": {"type": "string", "enum": ["low", "medium", "high"],
                  "description": "Impact of a wrong answer or action (money, safety, legal, customer trust)."},
         "latency": {"type": "string", "enum": ["realtime", "interactive", "background"],
@@ -134,6 +144,7 @@ Guidance:
   isn't covered by the documents, or the input lacks the needed information).
 - For tool_actions or research tasks, write cases that test the decision the model must get right (which
   action/tool, which record, which conclusion), still with short expected answers.
+- For agentic goals, count the distinct APIs/tools and request types, and say whether the steps are the same every time.
 - Where the goal doesn't say, assume sensible values for a mid-size company and list them in assumptions.
 
 Goal:
@@ -164,7 +175,7 @@ def _has(text, *words):
 
 def spec_from_rules(goal: str) -> dict:
     """Keyword-based stand-in for the Claude architect when no ANTHROPIC_API_KEY is set."""
-    g = goal.lower()
+    g = goal.lower().replace("-", " ").replace("_", " ")
     labels = []
     m = re.search(r"\(([^)]*(?:,| or | and )[^)]*)\)", goal) or re.search(
         r"\b(?:into|as either|as|between)\s+([\w\s/-]+(?:,\s*[\w\s/-]+)+(?:,?\s*(?:or|and)\s+[\w\s/-]+))", goal)
@@ -219,17 +230,32 @@ def spec_from_rules(goal: str) -> dict:
         "summary": goal.strip().rstrip(".") + ".",
         "task_type": task,
         "labels": labels,
-        "needs_documents": task == "grounded_qa" or _has(g, "our docs", "knowledge base", "help cent", "documentation"),
+        "needs_documents": task == "grounded_qa" or _has(g, "our docs", "knowledge base", "help cent", "documentation", "manuals", "wiki",
+                                                          "handbook", "faq", "policy docs", "policies", "runbook", "documents",
+                                                          "pdfs", "contracts", "filings", "quarterly report", "annual report", "our reports"),
         "document_size": ("large" if _has(g, "knowledge base", "help cent", "documentation", "docs", "wiki", "manuals", "all our")
                           else "small") if task == "grounded_qa" or _has(g, "our docs", "knowledge base", "help cent", "documentation") else "none",
-        "needs_tools": task == "tool_actions",
+        "needs_tools": task in ("tool_actions", "research") or _has(g, " api", "apis", "mcp"),  # research needs search tools
         "needs_memory": task in ("conversation", "tool_actions") or _has(g, "remember", "history", "follow-up", "multi-turn"),
-        "multi_step": task in ("research",) or _has(g, "multi-step", "several steps", "then ", "workflow"),
+        "multi_step": task in ("research",) or _has(g, "multi step", "several steps", "then ", "workflow", "sub agent", "specialist", "hand off", "hands"),
         "handles_personal_data": _has(g, "customer", "patient", "employee", "user", "email", "phone", "account",
                                       "personal", "payment", "hr "),
         "data_class": ("regulated" if _has(g, "patient", "medical", "health record", "hipaa", "payment card", "credit card", "pci")
                        else None),
         "needs_images": _has(g, "image", "photo", "screenshot", "scan", "scanned", "picture", "diagram"),
+        "steps_known": not (task == "research" or _has(g, "open ended", "figure out", "explore", "investigat", "whatever it takes",
+                                                        "autonomous", "decide how", "work out how")),
+        "request_types": len(labels) if labels else sum(1 for w in ("answer", "look", "issue", "cancel", "updat", "book", "refund", "reset",
+                                                                    "track", "chang", "creat", "hand", "escalat", "schedul") if _has(g, w)),
+        "specialists": _has(g, "sub agent", "subagent", "specialist", "hand off", "hands off", "handoff", "hands complex",
+                            "multiple agents", "team of agents"),
+        "multi_hop": _has(g, "compare", "across", "combine", "reconcil", "multi hop", "several documents", "multiple sources", "cross reference"),
+        "docs_change_often": _has(g, "daily", "frequently", "often", "constantly", "latest", "change every", "changes every"),
+        "structured_data": _has(g, "database", "sql", "warehouse", "tables", "spreadsheet", "analytics", "metrics", "kpi"),
+        "tool_count": int(_num_tools.group(1)) if (_num_tools := re.search(r"(\d+)\s*(?:\w+\s+)?(?:tools|apis|endpoints|integrations|mcp servers)", g)) else
+                      (max(3, sum(1 for w in ("look", "issue", "cancel", "updat", "book", "refund", "reset", "track", "creat", "send", "schedul", "provision")
+                                  if _has(g, w))) if task == "tool_actions" or _has(g, " api", "apis", "mcp", "tool") else 2 if task == "research" else 0),
+        "integration": "mcp" if _has(g, "mcp") else "direct",
         "risk": risk,
         "latency": latency,
         "requests_per_day": vol,
@@ -274,6 +300,22 @@ def finalize_spec(spec: dict) -> dict:
     s["existing"] = [x for x in (s.get("existing") or []) if x in ("gateway", "runtime", "cache", "vector_store")]
     s["commitment"] = s.get("commitment") if s.get("commitment") in policy.APPROVED_PLATFORMS else None
     s["engineer_week_usd"] = float(s["engineer_week_usd"]) if s.get("engineer_week_usd") else None
+    # Agentic system shape. Defaults come from knowledge/agentic.json; the page can override each one.
+    A = constraints.AGENTIC["defaults"]
+    s["tool_count"] = min(500, num("tool_count", 5 if s.get("needs_tools") else 0))
+    if s["tool_count"] > 0:
+        s["needs_tools"] = True
+    s["integration"] = s.get("integration") if s.get("integration") in ("direct", "mcp", "both") else "direct"
+    s["mcp_servers"] = num("mcp_servers", max(1, -(-s["tool_count"] // 5)) if s["integration"] != "direct" and s["tool_count"] else 0)
+    s["tool_calls_per_request"] = max(1, num("tool_calls_per_request", A["tool_calls_per_request"])) if s["needs_tools"] else 0
+    s["api_latency_ms"] = num("api_latency_ms", A["api_latency_ms"])
+    s["steps_known"] = s.get("steps_known") is not False and s["task_type"] != "research"
+    s["request_types"] = max(1, num("request_types", len(s["labels"]) or 1))
+    for k in ("specialists", "multi_hop", "docs_change_often", "structured_data"):
+        s[k] = bool(s.get(k))
+    if s["specialists"]:
+        s["multi_step"] = True
+    s["multi_model"] = s.get("multi_model") is not False
     return s
 
 
@@ -333,29 +375,46 @@ def _direct_rows(res, model):
              "conf": r.get("confidence"), "error": bool(r["error"])} for r in res[model]]
 
 
+def _turn_rows(res, model, turns, grow_tokens, steps=0, step_ms=0):
+    """Per-case outcomes for a model that takes `turns` calls, each seeing `grow_tokens` more context than the
+    last (tool results or search passages), plus `steps` external calls of `step_ms` each."""
+    price = catalog.MODEL_BY_ID[model]
+    out = []
+    for r in res[model]:
+        cost = sum(_cost({**r, "in_tokens": r["in_tokens"] + k * grow_tokens}, price) for k in range(turns))
+        out.append({"correct": (False if r["error"] and r["correct"] is not None else r["correct"]),
+                    "halluc": bool(r.get("hallucinated")), "cost": cost, "ms": turns * r["latency_ms"] + steps * step_ms,
+                    "conf": r.get("confidence"), "error": bool(r["error"]), "calls": turns})
+    return out
+
+
 def compose(arch, models, res, jev, spec):
     """Per-test-case outcomes for one architecture built from measured single-call results.
 
     `res[model]` is the list of per-case results for that model; `jev` the per-case Jev results (or None).
-    Returns (rows, evidence) where evidence is 'measured', 'composed' or 'estimated'.
+    Returns (rows, evidence) where evidence is 'measured', 'composed' or 'estimated'. Agentic designs are built
+    from the measured per-call results and the system shape you gave (tool calls, API latency), so their
+    formula is visible, but the number of turns is your estimate, not a measurement.
     """
+    A = constraints.AGENTIC["defaults"]
+    api_ms, n_calls = spec["api_latency_ms"], spec["tool_calls_per_request"]
     if arch in ("single_call", "rag", "batch", "long_context"):
         rows = _direct_rows(res, models["primary"])
         if arch == "rag":  # retrieval step; cases carry the reference text, i.e. retrieval found the right passage
-            rows = [{**r, "ms": r["ms"] + 120, "cost": r["cost"] + 0.00002} for r in rows]
+            rows = [{**r, "ms": r["ms"] + A["search_latency_ms"]} for r in rows]
         if arch == "batch":
             rows = [{**r, "cost": r["cost"] * 0.5, "ms": 30 * 60 * 1000} for r in rows]
         return rows, "measured" if arch in ("single_call", "long_context") else "composed"
     if arch in ("cascade", "rag_cascade"):
         small, large = _direct_rows(res, models["small"]), _direct_rows(res, models["primary"])
         rows = []
-        for s, g in zip(small, large):
-            if not s["error"] and s["conf"] is not None and s["conf"] >= 80:
-                rows.append({**s, "escalated": False})
+        for sm, g in zip(small, large):
+            if not sm["error"] and sm["conf"] is not None and sm["conf"] >= 80:
+                rows.append({**sm, "escalated": False, "calls": 1})
             else:
-                rows.append({**g, "cost": s["cost"] + g["cost"], "ms": s["ms"] + g["ms"], "escalated": True})
-        if arch == "rag_cascade":  # plus the retrieval step
-            rows = [{**r, "ms": r["ms"] + 120, "cost": r["cost"] + 0.00002} for r in rows]
+                rows.append({**g, "cost": sm["cost"] + g["cost"], "ms": sm["ms"] + g["ms"], "escalated": True, "calls": 2})
+        if arch == "rag_cascade":
+            rows = [{**r, "ms": r["ms"] + A["search_latency_ms"]} for r in rows]
         return rows, "composed"
     if arch == "decision_model":
         large = _direct_rows(res, models["primary"])
@@ -369,46 +428,89 @@ def compose(arch, models, res, jev, spec):
                 rows.append({**g, "cost": g["cost"] + jcost, "ms": g["ms"] + j["latency_ms"], "escalated": True})
         return rows, "composed"
     base = _direct_rows(res, models["primary"])
-    if arch == "workflow":
-        small = _direct_rows(res, models["small"])
-        return [{**g, "cost": g["cost"] + s["cost"], "ms": g["ms"] + s["ms"] + 40} for g, s in zip(base, small)], "estimated"
-    if arch == "evaluator_optimizer":  # draft + review + one revision with the same model
-        return [{**g, "cost": g["cost"] * 2.6, "ms": g["ms"] * 2.5} for g in base], "estimated"
-    if arch == "tool_agent":  # ~3 model turns with growing context, 2 tool calls of ~300 ms
-        return [{**g, "cost": g["cost"] * 3.6, "ms": g["ms"] * 3 + 600} for g in base], "estimated"
-    if arch == "multi_agent":  # lead plans + synthesizes, 3 workers in parallel on the small model
-        small = _direct_rows(res, models["small"])
-        return [{**g, "cost": g["cost"] * 2.4 + s["cost"] * 3 * 1.5, "ms": g["ms"] * 2 + s["ms"] * 1.3 + 300}
-                for g, s in zip(base, small)], "estimated"
+    small = _direct_rows(res, models["small"])
+    if arch == "workflow":  # classify (small) -> handler (main); tools are called by code, not by the model
+        return [{**g, "cost": g["cost"] + sm["cost"], "ms": g["ms"] + sm["ms"] + n_calls * api_ms, "calls": 2}
+                for g, sm in zip(base, small)], "estimated"
+    if arch == "router":  # router (small) -> handler; with multi-model, confident simple requests stay on the small model
+        rows = []
+        for g, sm in zip(base, small):
+            simple = spec["multi_model"] and not sm["error"] and sm["conf"] is not None and sm["conf"] >= 80
+            h = sm if simple else g
+            rows.append({**h, "cost": sm["cost"] * 0.3 + h["cost"], "ms": sm["ms"] * 0.5 + h["ms"] + n_calls * api_ms,
+                         "calls": 2, "escalated": not simple})
+        return rows, "estimated"
+    if arch == "evaluator_optimizer":  # draft + review + one revision
+        return [{**g, "cost": g["cost"] * 2.6, "ms": g["ms"] * 2.5, "calls": 3} for g in base], "estimated"
+    if arch == "tool_agent":  # one model call per tool call plus the final answer; each turn reads the tool results so far
+        return _turn_rows(res, models["primary"], n_calls + 1, A["tool_result_tokens"], n_calls, api_ms), "estimated"
+    if arch == "agentic_rag":  # search, read, search again, answer
+        k = A["agentic_searches"]
+        return _turn_rows(res, models["primary"], k + 1, spec["context_tokens"] or 2000, k, A["search_latency_ms"]), "estimated"
+    if arch == "multi_agent":  # lead plans, workers run in parallel (each a small tool loop), lead merges
+        w, wt = A["workers"], max(2, n_calls // A["workers"] + 1)
+        lead = _turn_rows(res, models["primary"], 2, w * 500)
+        worker = _turn_rows(res, models["small"], wt, A["tool_result_tokens"], max(1, n_calls // w), api_ms)
+        return [{**l, "cost": l["cost"] + w * wk["cost"], "ms": l["ms"] + wk["ms"] * 1.2, "calls": 2 + w * wt}
+                for l, wk in zip(lead, worker)], "estimated"
     raise ValueError(arch)
 
 
+ANSWER_ONLY = ("single_call", "cascade", "decision_model", "rag", "rag_cascade", "long_context", "batch",
+               "evaluator_optimizer", "agentic_rag")
+
+
 def applicable(spec):
-    """Which architectures fit the task, and why the others don't."""
+    """Which architectures fit the goal, and why the others don't. Every rule here is also listed, with its
+    source, in the decision trace (`decision_trace`)."""
+    TH = constraints.AGENTIC["thresholds"]
     t, why_not, ok = spec["task_type"], {}, []
     labels, docs, tools = bool(spec["labels"]), spec["needs_documents"], spec["needs_tools"]
+    data = docs or spec["structured_data"]
     multi = spec["multi_step"] or t == "research"
     single_step = not tools and not multi
     rules = {
         "single_call": (not tools and not multi, "the task needs actions or several steps, which one call can't do"),
         "cascade": (not tools and not multi, "the task needs actions or several steps"),
         "decision_model": (labels and not tools, "the answer isn't one of a fixed set of labels"),
-        "rag": (docs, "answers don't need to come from your own documents"),
-        "rag_cascade": (docs, "answers don't need to come from your own documents"),
-        "workflow": (multi or tools or t in ("summarization", "generation"), "the task is a single step"),
+        "rag": (docs and not spec["multi_hop"], "answers don't need to come from your own documents" if not docs
+                else "answers combine several documents, and one search pass often misses part of them"),
+        "rag_cascade": (docs and not spec["multi_hop"], "answers don't need to come from your own documents" if not docs
+                        else "answers combine several documents, and one search pass often misses part of them"),
+        "agentic_rag": (data and (spec["multi_hop"] or spec["structured_data"]),
+                        "one search per question is enough here" if data else "answers don't need your documents or data"),
+        "workflow": ((multi or tools or t in ("summarization", "generation")) and spec["steps_known"],
+                     "the steps vary per request, so a fixed chain can't cover them" if not spec["steps_known"] else "the task is a single step"),
+        "router": (spec["request_types"] >= TH["router_at_request_types"],
+                   f"requests don't split into {TH['router_at_request_types']}+ distinct types that need different handling"),
         "tool_agent": (tools, "the agent doesn't need to call your systems or take actions"),
         "evaluator_optimizer": (t in ("generation", "summarization", "research") and not tools,
                                 "answers are short and checkable, so a review loop adds cost without adding quality"),
-        "multi_agent": (t == "research" or (multi and spec["latency"] != "realtime"), "the task isn't open-ended research"),
-        "long_context": (docs and spec["document_size"] == "small", "your documents are too large to send with every request"
-                         if docs else "answers don't need to come from your own documents"),
+        "multi_agent": ((t == "research" or spec["specialists"] or spec["tool_count"] >= TH["split_agents_at_tools"])
+                        and spec["latency"] != "realtime",
+                        "one agent can handle this: no specialist domains and fewer than "
+                        f"{TH['split_agents_at_tools']} tools" if spec["latency"] != "realtime" else "someone needs the answer in real time"),
+        "long_context": (docs and spec["document_size"] == "small" and not spec["multi_hop"],
+                         "your documents are too large to send with every request" if docs
+                         else "answers don't need to come from your own documents"),
         "batch": (spec["latency"] == "background" and single_step,
                   "someone is waiting for the answer" if spec["latency"] != "background"
                   else "batch APIs run single calls; this task needs several steps or tools"),
     }
-    if docs:  # grounded tasks must retrieve; a bare call can't see the documents
-        rules["single_call"] = (False, "a single call can't see your documents; it would need them pasted in (that's RAG)")
-        rules["cascade"] = (False, "without retrieval the model can't see your documents")
+    if data:  # grounded tasks must retrieve; a bare call can't see the documents or tables
+        what = "documents" if docs else "tables"
+        rules["single_call"] = (False, f"a single call can't see your {what}; it needs a retrieval step")
+        rules["cascade"] = (False, f"without retrieval the model can't see your {what}")
+        rules["decision_model"] = (False, f"without retrieval the model can't see your {what}")
+        rules["batch"] = (False, f"batch calls can't search your {what}") if rules["batch"][0] else rules["batch"]
+    if tools:  # it must act: designs that only answer can't do the job, whatever they cost
+        for a in ANSWER_ONLY:
+            rules[a] = (False, "it can't search as it works; research needs tools in a loop" if t == "research"
+                        else "it only answers questions; this agent must take actions in your systems")
+    if not spec["multi_model"]:
+        for a in ("cascade", "rag_cascade"):
+            if rules[a][0]:
+                rules[a] = (False, "it needs two models, and multi-model is switched off")
     for a, (fits, reason) in rules.items():
         (ok.append(a) if fits else why_not.__setitem__(a, reason))
     return ok, why_not
@@ -443,6 +545,12 @@ def pick_models(res, spec, provider_of):
 
 def build_design(arch, models, variant, res, jev, spec):
     """One architecture with specific models: metrics composed from measured results, checked against requirements."""
+    if not spec["multi_model"]:  # one model for every role
+        models = {**models, "small": models["primary"]}
+    elif models.get("small") in res and models["small"] != models["primary"] and arch != "cascade" and arch != "rag_cascade":
+        own = lambda m: _agg(_direct_rows(res, m))["cost_per_req"]  # noqa: E731
+        if own(models["small"]) >= own(models["primary"]):  # a "small" role only makes sense if it's cheaper
+            models = {**models, "small": models["primary"]}
     res = constraints.inflate(res, spec, arch, list(models.values()))
     rows, evidence = compose(arch, models, res, jev, spec)
     m = _agg(rows)
@@ -471,6 +579,9 @@ def build_design(arch, models, variant, res, jev, spec):
         "escalation_rate": (sum(1 for r in rows if r.get("escalated")) / len(rows)) if rows and arch in ("cascade", "rag_cascade", "decision_model") else None,
     }
     d["total_monthly"] = d["monthly"] + d["infra_monthly"]
+    d["calls_per_req"] = statistics.fmean(r.get("calls", 1) for r in rows) if rows else 1
+    d["flow"] = flow_for(arch, spec, d["flow"])
+    d["roles"] = roles_for(arch, d["models"], spec)
     d["peak"] = constraints.peak(d, spec, tokens_per_call)
     d["context_needed"] = constraints.required_context(spec, arch)
     d["checks"] = checks(d, spec)
@@ -602,7 +713,13 @@ def rank_designs(spec, res, jev, mode=None, jev_blocked=False):
         for k in ("_table", "_good", "_cheaper"):
             d.pop(k, None)
     explain(top, spec, picks)
-    return {"top": top, "all": designs, "not_applicable": why_not, "models": picks, "model_table": table}
+    system = system_design(top[0], spec) if top else None
+    if system:  # say what each rule led to: the rank it got, or why it was ruled out
+        rank = {d["arch"]: i + 1 for i, d in enumerate(designs)}
+        for t in system["trace"]:
+            t["effects"] = [{"arch": a, "name": ARCHITECTURES[a]["name"], "rank": rank.get(a), "of": len(designs),
+                             "ruled_out": why_not.get(a)} for a in t.pop("patterns")]
+    return {"top": top, "all": designs, "not_applicable": why_not, "models": picks, "model_table": table, "system": system}
 
 
 def robustness(spec, res, jev, mode, jev_blocked, base):
@@ -622,6 +739,8 @@ def robustness(spec, res, jev, mode, jev_blocked, base):
         (f"{name} costs 30% more", {}, {model: 1.3}),
         ("Without the production harness" if spec.get("harness") else "With a production harness",
          {"harness": not spec.get("harness")}, None),
+        ("One model for every role" if spec["multi_model"] else "Allowing a different model per role",
+         {"multi_model": not spec["multi_model"]}, None),
     ]
     out = []
     for run in filter(None, runs):
@@ -663,6 +782,150 @@ def addons_for(arch, spec):
     return out
 
 
+def flow_for(arch, spec, flow):
+    """The pattern's flow, filled in with this system's tools, integration and data sources."""
+    tools = spec["tool_count"] if spec["needs_tools"] else 0
+    via = {"direct": "", "mcp": " via MCP", "both": " via MCP + direct"}[spec["integration"]]
+    search = "search your docs" if spec["needs_documents"] else ""
+    sql = "query your tables" if spec["structured_data"] else ""
+    apis = ("web search + fetch" if spec["task_type"] == "research" and tools <= 2 else f"{tools} APIs{via}") if tools else ""
+    what = ", ".join(x for x in (search, sql, apis) if x)
+    if arch == "tool_agent":
+        return ["App", "Agent Runtime", f"LLM ⇄ {what or 'your tools'}", "Human approval" if spec["risk"] == "high" else "Answer"]
+    if arch == "multi_agent" and tools:
+        return ["App", "Lead agent (plans)", f"Specialist agents ⇄ {what}", "Lead merges"]
+    if arch == "workflow" and (tools or search):
+        return ["App", "Classify", "Tested handler" + (f" ({what})" if what else ""), "Check", "Human approval" if spec["risk"] == "high" else "Done"]
+    if arch == "router":
+        return ["App", "Router (small model)", f"{spec['request_types']} handlers" + (f" ({what})" if what else ""), "Check"]
+    if arch == "agentic_rag":
+        return ["App", f"LLM ⇄ {what or 'search tools'}", "Answer with citations"]
+    return flow
+
+
+ROLE_NAMES = {
+    "single_call": [("answer", "primary")], "rag": [("answer from retrieved passages", "primary")],
+    "long_context": [("answer", "primary")], "batch": [("answer (batch)", "primary")],
+    "cascade": [("first try", "small"), ("escalation when unsure", "primary")],
+    "rag_cascade": [("first try", "small"), ("escalation when unsure", "primary")],
+    "decision_model": [("decision (Jev)", None), ("fallback when unsure", "primary")],
+    "workflow": [("classify / extract", "small"), ("decide and draft", "primary")],
+    "router": [("router", "small"), ("simple requests", "small"), ("complex requests", "primary")],
+    "tool_agent": [("agent: plans and calls tools", "primary")],
+    "agentic_rag": [("searches and answers", "primary")],
+    "multi_agent": [("lead: plans and merges", "primary"), ("specialist agents", "small")],
+    "evaluator_optimizer": [("writer", "primary"), ("reviewer", "primary")],
+}
+
+
+def roles_for(arch, models, spec):
+    out = []
+    for role, key in ROLE_NAMES[arch]:
+        m = "jev" if key is None else models[key]
+        if arch == "router" and role == "simple requests" and not spec["multi_model"]:
+            m = models["primary"]
+        out.append({"role": role, "model": m})
+    if models.get("fallback"):
+        out.append({"role": "fallback (another platform)", "model": models["fallback"]})
+    return out
+
+
+def _src(keys):
+    return [PATTERN_KNOWLEDGE["sources"][k] for k in keys]
+
+
+def decision_trace(spec):
+    """The facts about the goal that decided which patterns were considered, each with the rule it triggered
+    and the published guidance behind it. Shown on the page so a reviewer can check the reasoning."""
+    R, TH = constraints.AGENTIC["rules"], constraints.AGENTIC["thresholds"]
+    out = []
+    EFFECT = {"acts": ["tool_agent", "workflow", "router", "multi_agent"], "uses_tools": ["tool_agent", "multi_agent"], "steps_known": ["workflow", "router"], "steps_vary": ["tool_agent"],
+              "split_agents": ["multi_agent"], "single_agent": ["tool_agent"], "request_types": ["router"],
+              "multi_hop": ["agentic_rag"], "retrieval_in_agent": [], "tool_search": [], "multi_model_on": ["cascade", "rag_cascade", "router"],
+              "multi_model_off": []}
+    add = lambda fact, key: out.append({"fact": fact, "rule": R[key]["text"], "sources": _src(R[key]["sources"]),  # noqa: E731
+                                        "patterns": EFFECT.get(key, [])})
+    if spec["needs_tools"]:
+        if spec["task_type"] == "research":
+            add(f"Needs search tools as it works ({spec['tool_count']})", "uses_tools")
+        else:
+            add(f"Takes actions in your systems ({spec['tool_count']} APIs/tools)", "acts")
+        add("Steps are the same every time" if spec["steps_known"] else "Steps vary per request",
+            "steps_known" if spec["steps_known"] else "steps_vary")
+        if spec["specialists"] or spec["tool_count"] >= TH["split_agents_at_tools"]:
+            add("Specialist domains" if spec["specialists"] else f"{spec['tool_count']} tools", "split_agents")
+        else:
+            add(f"{spec['tool_count']} tools, no separate specialist domains", "single_agent")
+        if spec["tool_count"] >= TH["tool_search_at_tools"]:
+            add(f"{spec['tool_count']} tools", "tool_search")
+    elif spec["multi_step"]:
+        add("Several steps", "steps_known" if spec["steps_known"] else "steps_vary")
+    if spec["request_types"] >= TH["router_at_request_types"]:
+        add(f"{spec['request_types']} distinct request types", "request_types")
+    if spec["needs_documents"] and spec["needs_tools"]:
+        add("Uses your documents and takes actions", "retrieval_in_agent")
+    if spec["multi_hop"]:
+        add("Answers combine several documents or sources", "multi_hop")
+    add("Multi-model allowed" if spec["multi_model"] else "Multi-model switched off", "multi_model_on" if spec["multi_model"] else "multi_model_off")
+    return out
+
+
+def integration_plan(spec, d):
+    """How to connect the tools: MCP or direct function tools, and what that costs and needs."""
+    if not spec["needs_tools"]:
+        return None
+    I, TH = constraints.AGENTIC["integration"], constraints.AGENTIC["thresholds"]
+    n = spec["tool_count"]
+    if spec["integration"] in ("mcp", "both"):
+        rec, why = ("MCP servers" if spec["integration"] == "mcp" else "MCP plus direct tools"), ["your goal or settings say the tools are exposed via MCP"]
+    elif n >= TH["mcp_at_tools"]:
+        rec, why = "Consider MCP", [f"{n} tools are easier to govern behind MCP servers"] + I["mcp_when"][:2]
+    else:
+        rec, why = "Direct function tools", I["direct_when"]
+    seen = constraints.tools_seen(spec, d["arch"])
+    return {"recommendation": rec, "why": why, "tool_count": n, "tools_per_call": seen,
+            "definition_tokens": constraints.tool_definition_tokens(spec, d["arch"]),
+            "tool_search": n >= TH["tool_search_at_tools"] and d["arch"] in constraints.TOOL_ARCHS,
+            "mcp_servers": spec["mcp_servers"], "calls_per_request": spec["tool_calls_per_request"],
+            "api_latency_ms": spec["api_latency_ms"],
+            "controls": I["controls"] if spec["integration"] != "direct" or n >= TH["mcp_at_tools"] else I["controls"][1:3] + I["controls"][4:],
+            "sources": _src(I["sources"])}
+
+
+def retrieval_plan(spec, d):
+    """Which retrieval approach fits, and the components it needs, each with the reason it applies."""
+    if not (spec["needs_documents"] or spec["structured_data"]):
+        return None
+    C, arch = constraints.AGENTIC["retrieval"]["components"], d["arch"]
+    strategy = {"long_context": "Whole documents in the prompt, cached",
+                "rag": "Classic RAG: one search per question", "rag_cascade": "Classic RAG with small-to-large escalation",
+                "agentic_rag": "Agentic retrieval: search, read, search again"}.get(
+        arch, "Retrieval as a tool the agent calls" if arch in ("tool_agent", "multi_agent")
+        else "Retrieval inside the handlers that need it" if arch == "router" else "Retrieval as a step in the workflow")
+    pick = []
+    if spec["needs_documents"] and arch != "long_context":
+        pick += ["chunking", "hybrid"]
+        if spec["document_size"] == "large" and spec["accuracy_target"] >= 0.9:
+            pick.append("rerank")
+        if spec["multi_hop"] or spec["data_class"] in ("confidential", "regulated"):
+            pick.append("filters")
+    if spec["needs_documents"] and spec["docs_change_often"]:
+        pick.append("freshness")
+    if spec["risk"] != "low" or spec["max_hallucination"] <= 0.02:
+        pick.append("citations")
+    if spec["structured_data"]:
+        pick.append("sql")
+    if spec["needs_documents"] and arch != "long_context":
+        pick.append("eval")
+    return {"strategy": strategy, "caveat": constraints.AGENTIC["retrieval"]["caveat"],
+            "components": [{"id": k, "name": C[k]["name"], "why": C[k]["why"], "sources": _src(C[k]["sources"])} for k in pick]}
+
+
+def system_design(d, spec):
+    return {"trace": decision_trace(spec), "roles": d["roles"], "integration": integration_plan(spec, d),
+            "retrieval": retrieval_plan(spec, d)}
+
+
 def harness_for(arch, models, res, rows, spec):
     """The production controls around one architecture. Controls that call a model are priced from this run's
     measured results (a small-model call per request, retries at the measured failure rate); the rest add no
@@ -686,6 +949,7 @@ def harness_for(arch, models, res, rows, spec):
         "grounding": (spec["needs_documents"], small["cost_per_req"], small["p50_ms"],
                       f"one {s_name} call per answer, before it is shown"),
         "tool_gate": (tools, 0.0, 0, "approvals wait for a person, outside the request"),
+        "mcp_governance": (spec["needs_tools"] and spec["integration"] != "direct", 0.0, 0, "configuration and review; no model cost"),
         "limits": (arch in LOOPING, 0.0, 0, "configuration in the agent runtime"),
         "calibration": (arch in ("cascade", "rag_cascade"), 0.0, 0, "computed from the traces"),
         "failover": (True, 0.0, 0, "no cost unless the main model fails"),
@@ -811,8 +1075,11 @@ def explain(top, spec, picks):
         "long_context": "Your documents are small enough to send with every request, so you get grounded answers without building a search index.",
         "rag_cascade": "Answers come from your documents, and most questions are easy enough for the small model; only the unsure ones pay for the large model.",
         "rag": "Answers have to come from your documents; retrieving the right passages first keeps them grounded and lets the model say 'unknown'.",
-        "workflow": "The job has predictable steps, so a fixed pipeline is easier to test and debug than a free-roaming agent.",
-        "tool_agent": "The agent has to act in your systems, and which tools it needs varies per request.",
+        "workflow": "The steps are the same every time, so a fixed workflow is easier to test, cheaper and more predictable than an agent that decides its own steps.",
+        "tool_agent": f"The agent has to act in your systems and the steps vary per request; priced at about {spec['tool_calls_per_request']} tool calls per request.",
+        "router": f"Requests split into {spec['request_types']} types; each gets its own tested handler"
+                  + (", and simple ones stay on the small model." if spec["multi_model"] else "."),
+        "agentic_rag": "Answers combine several documents or sources, so the model searches again after reading the first results.",
         "multi_agent": "The task is broad and open-ended; parallel specialists cover more ground than one model.",
         "batch": "Nobody is waiting for the result, so batch pricing halves the model cost.",
         "evaluator_optimizer": "Written quality matters here, and a second review pass catches issues a single draft misses.",

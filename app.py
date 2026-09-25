@@ -523,6 +523,7 @@ class AdviseReq(BaseModel):
     harness: bool = False  # wrap each architecture in production controls, priced into the numbers
     constraints: dict | None = None  # data class, region, images, existing platform pieces, commitment, engineer-week rate
     fresh: bool = False  # skip the result cache
+    multi_model: bool = True  # allow a different model per role (router, workers, escalation)
 
 
 # Advice is computed on the fly and never stored per user. Finished results are kept in memory for a while, keyed
@@ -531,7 +532,9 @@ class AdviseReq(BaseModel):
 ADVICE_TTL = int(os.environ.get("ADVICE_CACHE_TTL", 24 * 3600))
 ADVICE_MAX = int(os.environ.get("ADVICE_CACHE_MAX", 200))
 _advice_cache: "collections.OrderedDict[str, dict]" = collections.OrderedDict()
-CONSTRAINT_KEYS = ("data_class", "residency", "needs_images", "existing", "commitment", "engineer_week_usd", "peak_factor")
+CONSTRAINT_KEYS = ("data_class", "residency", "needs_images", "existing", "commitment", "engineer_week_usd", "peak_factor",
+                   "tool_count", "integration", "mcp_servers", "tool_calls_per_request", "api_latency_ms", "steps_known",
+                   "request_types", "specialists", "multi_hop", "docs_change_often", "structured_data")
 
 
 def _knowledge_version():
@@ -541,7 +544,7 @@ def _knowledge_version():
 
 
 def _advice_key(req):
-    body = {"goal": " ".join(req.goal.lower().split()), "spec": req.spec, "harness": req.harness, "sim": req.force_sim,
+    body = {"goal": " ".join(req.goal.lower().split()), "spec": req.spec, "harness": req.harness, "sim": req.force_sim, "mm": req.multi_model,
             "constraints": req.constraints or {}, "k": _knowledge_version()}
     return hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()[:32]
 
@@ -601,7 +604,7 @@ async def api_advise(req: AdviseReq, request: Request):
         else:
             spec, source = advisor.spec_from_rules(req.goal), "rules"
         spec = {**spec, **{k: v for k, v in (req.constraints or {}).items() if k in CONSTRAINT_KEYS and v not in (None, "")}}
-        spec = advisor.finalize_spec(spec)
+        spec = advisor.finalize_spec({**spec, "multi_model": req.multi_model})
         spec["harness"] = req.harness
         items = normalize_items(advisor.items_for(spec))
         confirm = advisor.cross_check(spec, req.goal) if source == "claude" and req.goal else []

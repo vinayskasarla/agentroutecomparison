@@ -21,6 +21,18 @@
     "typesafe": {
       "title": "TypeSafe — Jev (System One model)",
       "url": "https://typesafe.ai"
+    },
+    "mcp": {
+      "title": "Model Context Protocol — Specification",
+      "url": "https://modelcontextprotocol.io/specification"
+    },
+    "anthropic_tools": {
+      "title": "Anthropic — Tool use (incl. tool search for large tool sets)",
+      "url": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview"
+    },
+    "anthropic_retrieval": {
+      "title": "Anthropic — Contextual Retrieval (hybrid search + reranking)",
+      "url": "https://www.anthropic.com/news/contextual-retrieval"
     }
   },
   "principles": [
@@ -28,7 +40,8 @@
     "Prefer predictable workflows over autonomous agents when the steps are known in advance.",
     "Put guardrails and a human in the loop before irreversible or high-impact actions.",
     "Ground answers in your data (RAG or long context) rather than the model's memory when facts matter.",
-    "Keep an evaluation set and re-run it before every prompt or model change."
+    "Keep an evaluation set and re-run it before every prompt or model change.",
+    "Keep one agent until tool overload or clearly separate domains justify splitting it; route distinct request types before reaching for autonomy."
   ],
   "patterns": {
     "single_call": {
@@ -256,6 +269,48 @@
         "SQS queue",
         "Batch submit + poll job",
         "S3 results store with retries"
+      ]
+    },
+    "router": {
+      "name": "Router to specialised handlers",
+      "complexity": 3,
+      "sources": [
+        "anthropic",
+        "openai"
+      ],
+      "flow": [
+        "App",
+        "Router (small model)",
+        "Handler per request type",
+        "Check"
+      ],
+      "what": "A small model sorts each request into a type; each type has its own tested prompt, tools and model.",
+      "pick_if": "requests fall into a few distinct types that need different handling or different models.",
+      "components": [
+        "Router with a fixed list of request types",
+        "One tested handler per type",
+        "Fallback route for 'other'"
+      ]
+    },
+    "agentic_rag": {
+      "name": "Agentic retrieval (search, read, search again)",
+      "complexity": 3,
+      "sources": [
+        "anthropic",
+        "aws_genai",
+        "anthropic_retrieval"
+      ],
+      "flow": [
+        "App",
+        "LLM ⇄ search tools",
+        "Grounded answer with citations"
+      ],
+      "what": "The model decides what to search, reads the results and searches again until it can answer, citing passages.",
+      "pick_if": "answers need several documents or sources combined, or a follow-up search after the first.",
+      "components": [
+        "Search tools over each source",
+        "Search-step limit",
+        "Citation of every passage used"
       ]
     }
   }

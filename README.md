@@ -168,6 +168,36 @@ The harness cost and latency are added to every figure: the ranking, the winner,
 
 All harness figures are labelled estimates. With the box unticked, the page shows prototype numbers, and it warns when the goal takes actions, carries high risk or handles personal data. The controls and their sources are in `knowledge/harness.json`.
 
+## Agentic systems: tools, MCP, orchestration, multiple models, retrieval
+
+The advisor picks the pattern from the shape of the goal, and shows the reasoning as a **decision trace**. Each fact about the goal is listed with the rule it triggered, the published guidance behind the rule, and what the rule led to (the rank each pattern got, or why it was ruled out).
+
+| Fact about the goal | Effect |
+|---|---|
+| Takes actions in your systems | Designs that only answer (single call, RAG, whole documents, cascade, batch, agentic retrieval) are ruled out |
+| Steps are the same every time | Fixed workflow or router preferred over an autonomous agent |
+| Steps vary per request | Fixed workflow ruled out; tool-using agent |
+| 3+ distinct request types | Router to specialised handlers |
+| Specialist domains, or 15+ tools | Orchestrator with specialist agents considered |
+| 20+ tools | Tool search: load tool definitions on demand |
+| Uses documents and takes actions | Retrieval becomes a tool or step inside the agent (vector store priced in) |
+| Answers combine several documents or sources, or facts live in tables | Agentic retrieval (search, read, search again; text-to-SQL for tables); single-pass RAG ruled out |
+| Multi-model off | One model for every role; two-model designs ruled out |
+
+**How agentic designs are priced:**
+- Each tool call is one more model turn, and each turn reads the tool results so far.
+- Tool definitions are counted in every call, and cached where the platform allows it.
+- API latency is added per call.
+- MCP servers you host are priced as infrastructure.
+- Accuracy, cost and speed per call are measured; the number of turns comes from your inputs. Whether the agent picks the right tool isn't tested yet, and the page says so.
+
+**What the page takes and shows:**
+- **Multi-model checkbox:** allows a different model per role. A separate small model is used only where it is cheaper and good enough.
+- **Agent system inputs:** number of tools, MCP or direct integration, MCP servers, tool calls per request, API latency, request types, whether steps vary, specialists, multi-document questions, changing documents, and data in tables. Leave them blank to work them out from the goal.
+- **System design card:** the decision trace, models per role, a tools and integration plan (MCP or direct tools, tool definitions per call, tool search, governance controls), and a retrieval plan. The retrieval plan covers strategy, chunking, hybrid search, reranking, filters and permissions, re-indexing, citations, text-to-SQL and retrieval evaluation, each with the reason it applies.
+
+Rules, thresholds and defaults live in `knowledge/agentic.json`. Each cites its source, and the thresholds are this tool's defaults, not vendor limits.
+
 ## Beyond accuracy: what else decides the answer
 
 | Question an architect asks | How the advisor handles it | Where to change it |

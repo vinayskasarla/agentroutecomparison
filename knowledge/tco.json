@@ -3,25 +3,84 @@
   "status": "estimate",
   "note": "Planning estimates for comparing architectures, owned by your platform team. They are not vendor quotes. Build effort is engineer-weeks for a first production release by a team that knows the stack.",
   "build_weeks": {
-    "single_call": [1, 2], "batch": [1, 2], "long_context": [1, 2], "cascade": [2, 3], "decision_model": [2, 3],
-    "rag": [3, 5], "rag_cascade": [4, 6], "workflow": [3, 5], "evaluator_optimizer": [2, 4],
-    "tool_agent": [4, 8], "multi_agent": [6, 10]
+    "single_call": [
+      1,
+      2
+    ],
+    "batch": [
+      1,
+      2
+    ],
+    "long_context": [
+      1,
+      2
+    ],
+    "cascade": [
+      2,
+      3
+    ],
+    "decision_model": [
+      2,
+      3
+    ],
+    "rag": [
+      3,
+      5
+    ],
+    "rag_cascade": [
+      4,
+      6
+    ],
+    "workflow": [
+      3,
+      5
+    ],
+    "evaluator_optimizer": [
+      2,
+      4
+    ],
+    "tool_agent": [
+      4,
+      8
+    ],
+    "multi_agent": [
+      6,
+      10
+    ],
+    "router": [
+      2,
+      4
+    ],
+    "agentic_rag": [
+      4,
+      6
+    ]
   },
-  "harness_build_weeks": [2, 3],
+  "harness_build_weeks": [
+    2,
+    3
+  ],
   "infra": {
     "vector_store": {
       "name": "Vector store",
-      "applies": ["rag", "rag_cascade"],
+      "applies": "retrieval",
       "monthly": 175,
       "basis": "a small managed vector store, e.g. an OpenSearch Serverless dev/test collection (about 1 OCU at $0.24/hour)",
       "source": "https://aws.amazon.com/opensearch-service/pricing/"
     },
     "embeddings": {
       "name": "Query embeddings",
-      "applies": ["rag", "rag_cascade"],
+      "applies": "retrieval",
       "per_1m_tokens": 0.02,
       "basis": "Amazon Titan Text Embeddings V2 price per 1M tokens, one embedding per request",
       "source": "https://aws.amazon.com/bedrock/pricing/"
+    },
+    "mcp_servers": {
+      "name": "MCP servers",
+      "applies": "mcp",
+      "monthly_per_server": 20,
+      "basis": "a small always-on container per MCP server you host yourself (vendor-hosted servers cost nothing here)",
+      "source": "https://aws.amazon.com/apprunner/pricing/"
     }
   },
   "engineer_week_usd": null

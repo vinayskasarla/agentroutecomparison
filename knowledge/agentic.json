@@ -1,0 +1,189 @@
+{
+  "reviewed_on": "2026-09-25",
+  "status": "starting point",
+  "note": "Rules and defaults for agentic designs. Thresholds are this tool's configurable defaults, not vendor limits; each rule cites the guidance it follows.",
+  "defaults": {
+    "tokens_per_tool_definition": 250,
+    "tool_result_tokens": 400,
+    "api_latency_ms": 300,
+    "tool_calls_per_request": 3,
+    "agentic_searches": 2,
+    "workers": 3,
+    "search_latency_ms": 120
+  },
+  "thresholds": {
+    "tool_search_at_tools": 20,
+    "split_agents_at_tools": 15,
+    "router_at_request_types": 3,
+    "mcp_at_tools": 8
+  },
+  "rules": {
+    "acts": {
+      "text": "It must act in your systems, so designs that only answer (single call, RAG, whole documents, cascade, batch) are ruled out.",
+      "sources": [
+        "anthropic",
+        "openai"
+      ]
+    },
+    "steps_known": {
+      "text": "The steps are the same every time, so a fixed workflow is preferred over an autonomous agent: easier to test, cheaper, more predictable.",
+      "sources": [
+        "anthropic"
+      ]
+    },
+    "steps_vary": {
+      "text": "The steps vary per request, so a fixed chain can't cover them; an agent that chooses its next tool is needed.",
+      "sources": [
+        "anthropic",
+        "openai"
+      ]
+    },
+    "request_types": {
+      "text": "Requests fall into several distinct types, so routing each type to its own tested handler fits.",
+      "sources": [
+        "anthropic",
+        "openai"
+      ]
+    },
+    "single_agent": {
+      "text": "One agent can handle this many tools; add agents only on tool overload or separate domains.",
+      "sources": [
+        "openai"
+      ]
+    },
+    "split_agents": {
+      "text": "Many tools or separate specialist domains: an orchestrator with specialist agents keeps each agent's toolset small.",
+      "sources": [
+        "openai",
+        "anthropic"
+      ]
+    },
+    "tool_search": {
+      "text": "With this many tools, load tool definitions on demand (tool search) instead of sending all of them on every call.",
+      "sources": [
+        "anthropic_tools"
+      ]
+    },
+    "multi_hop": {
+      "text": "Answers combine several documents or sources, so one retrieval pass is often not enough; agentic retrieval searches again.",
+      "sources": [
+        "anthropic",
+        "aws_genai"
+      ]
+    },
+    "retrieval_in_agent": {
+      "text": "The agent both acts and needs your documents, so retrieval becomes one of its tools rather than a separate design.",
+      "sources": [
+        "openai",
+        "aws_agentic"
+      ]
+    },
+    "multi_model_on": {
+      "text": "Different models per role are allowed: cheap models route and check, the stronger model decides.",
+      "sources": [
+        "anthropic",
+        "aws_genai"
+      ]
+    },
+    "multi_model_off": {
+      "text": "One model for every role: simpler to operate, evaluate and fail over; designs that need two models are ruled out.",
+      "sources": [
+        "anthropic"
+      ]
+    },
+    "uses_tools": {
+      "text": "It has to search and read as it goes, so designs that answer in one pass without tools are ruled out.",
+      "sources": [
+        "anthropic",
+        "openai"
+      ]
+    }
+  },
+  "integration": {
+    "mcp_when": [
+      "tools are shared across several agents or teams",
+      "the vendor already publishes an MCP server",
+      "there are many tools to govern in one place"
+    ],
+    "direct_when": [
+      "one agent uses a few tools",
+      "every millisecond of latency counts",
+      "the APIs are internal and change with the agent"
+    ],
+    "controls": [
+      "Authenticate each MCP server (OAuth or scoped keys), never shared admin credentials",
+      "Allow-list the tools each agent may call",
+      "Human approval for tools that write, pay or delete",
+      "Pin server versions and review tool descriptions on upgrade",
+      "Log every tool call with its arguments"
+    ],
+    "sources": [
+      "mcp",
+      "openai",
+      "aws_agentic"
+    ]
+  },
+  "retrieval": {
+    "caveat": "This tool doesn't measure retrieval quality yet: test cases include the right passage. Measure search hit rate on your own documents before launch.",
+    "components": {
+      "chunking": {
+        "name": "Structure-aware chunking",
+        "why": "split on headings and sections, a few hundred tokens each, keeping titles with each chunk",
+        "sources": [
+          "aws_genai",
+          "anthropic_retrieval"
+        ]
+      },
+      "hybrid": {
+        "name": "Hybrid search (keyword + vector)",
+        "why": "exact terms like order IDs, product codes and policy names are missed by vector search alone",
+        "sources": [
+          "anthropic_retrieval"
+        ]
+      },
+      "rerank": {
+        "name": "Reranker",
+        "why": "large document sets and a high accuracy target: rerank the top results before answering",
+        "sources": [
+          "anthropic_retrieval"
+        ]
+      },
+      "filters": {
+        "name": "Metadata filters and document permissions",
+        "why": "several sources or sensitive data: filter by source, product or date, and only retrieve what the user may see",
+        "sources": [
+          "aws_genai"
+        ]
+      },
+      "freshness": {
+        "name": "Incremental re-indexing",
+        "why": "documents change often: re-index on change, not on a schedule, and show the document date",
+        "sources": [
+          "aws_genai"
+        ]
+      },
+      "citations": {
+        "name": "Citations and a grounding check",
+        "why": "a wrong answer is costly: every answer cites its passage, unsupported answers are withheld",
+        "sources": [
+          "aws_genai"
+        ]
+      },
+      "sql": {
+        "name": "Text-to-SQL over a read-only view",
+        "why": "the facts live in tables, not documents: query them directly instead of embedding rows",
+        "sources": [
+          "aws_genai"
+        ]
+      },
+      "eval": {
+        "name": "Retrieval evaluation",
+        "why": "measure search hit rate on real questions separately from answer accuracy",
+        "sources": [
+          "aws_genai",
+          "anthropic_retrieval"
+        ]
+      }
+    }
+  }
+}

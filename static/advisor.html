@@ -55,12 +55,30 @@
     <div class="runrow">
       <button class="primary" id="go">Get architecture advice</button>
       <label class="check" style="margin:0" data-tip="Wrap every suggested architecture in the controls it needs in production (guardrails, output checks, limits, failover, tracing, evaluation) and include their cost and latency in the numbers and the ranking."><input type="checkbox" id="harness"> <span>Production harness</span></label>
+      <label class="check" style="margin:0" data-tip="Allow a different model per role: a small model routes, checks or handles simple requests; a stronger one decides. Untick to use one model everywhere (simpler to run and fail over)."><input type="checkbox" id="multiModel" checked> <span>Multi-model</span></label>
       <label class="check" style="margin:0"><input type="checkbox" id="forceSim"> <span>Simulate (no API spend)</span></label>
       <ol class="stepper hidden" id="stepper">
         <li data-s="understand"><span></span>Understand</li><li data-s="test"><span></span>Test models</li><li data-s="rank"><span></span>Rank</li>
       </ol>
     </div>
     <div class="progress hidden" id="progressWrap" style="margin-top:10px"><div id="bar"></div></div>
+    <details class="cons" id="agentBox"><summary>Agent system <span class="hint">· tools, MCP, orchestration, data sources (leave blank to work it out from the goal)</span></summary>
+      <div class="reqs" style="margin-top:10px">
+        <div><label for="g_tools">APIs / tools it calls</label><input type="number" id="g_tools" min="0" placeholder="from goal"></div>
+        <div><label for="g_int">Connected via</label><select id="g_int"><option value="">Work it out</option><option value="direct">Direct function tools</option><option value="mcp">MCP servers</option><option value="both">Both</option></select></div>
+        <div><label for="g_mcp">MCP servers you host</label><input type="number" id="g_mcp" min="0" placeholder="auto"></div>
+        <div><label for="g_calls">Tool calls per request</label><input type="number" id="g_calls" min="1" placeholder="3"></div>
+        <div><label for="g_lat">API latency</label><div class="unit"><input type="number" id="g_lat" min="0" step="50" placeholder="300"><span>ms</span></div></div>
+        <div><label for="g_types">Distinct request types</label><input type="number" id="g_types" min="1" placeholder="from goal"></div>
+        <div><label for="g_steps">Steps per request</label><select id="g_steps"><option value="">Work it out</option><option value="1">Same every time</option><option value="0">Vary per request</option></select></div>
+      </div>
+      <div class="exrow">
+        <label class="check"><input type="checkbox" id="g_spec"> <span>Hands off to specialist agents</span></label>
+        <label class="check"><input type="checkbox" id="g_hop"> <span>Answers combine several documents or sources</span></label>
+        <label class="check"><input type="checkbox" id="g_fresh"> <span>Documents change often</span></label>
+        <label class="check"><input type="checkbox" id="g_sql"> <span>Facts live in databases or tables</span></label>
+      </div>
+    </details>
     <details class="cons" id="consBox"><summary>Constraints <span class="hint" id="consShort">· data sensitivity, region, what you already run</span></summary>
       <div class="reqs" style="margin-top:10px">
         <div><label for="c_data">Most sensitive data</label><select id="c_data"><option value="">Work it out from the goal</option></select></div>
@@ -90,6 +108,11 @@
     <h2 class="sectiontitle" id="archTitle">Top 3 architectures for this agent</h2>
     <div class="hnote hidden" id="hnote"></div>
     <div class="top3" id="top3"></div>
+
+    <section class="card" id="sysCard">
+      <div class="cardhead"><div><h2>System design for architecture 1</h2><p class="hint" id="sysHint" style="margin:0"></p></div></div>
+      <div id="sys"></div>
+    </section>
 
     <section class="card" id="robustCard">
       <div class="cardhead"><div><h2>Does the answer change?</h2><p class="hint" id="robustHint" style="margin:0"></p></div></div>
@@ -216,6 +239,8 @@ const BUILD = {
   evaluator_optimizer: ["Writer drafts; reviewer checks against a written rubric.", "Revise once or twice at most.", "Track rubric scores over time."],
   tool_agent: ["Expose APIs as narrow tools with strict schemas.", "Run on the Agent Runtime with per-tool permissions and step limits.", "Human approval for refunds, deletions and other irreversible actions."],
   multi_agent: ["Lead model plans and splits the work.", "Workers run in parallel on the small model with search tools.", "Lead merges and cites; cap steps and spend per run."],
+  router: ["Define the request types and a router prompt (small model) with an 'other' route.", "Build and test one handler per type: its own prompt, tools and model.", "Measure routing accuracy separately from handler accuracy."],
+  agentic_rag: ["Give the model search tools over each source (documents, SQL view).", "Cap searches per question; require a citation for every claim.", "Evaluate retrieval hit rate and answer accuracy separately."],
   batch: ["Queue requests; submit via the providers' batch APIs (~50% off).", "Store results in S3; retry failures next batch.", "Keep an on-demand path for urgent requests."],
 };
 let CFG, KNOW, ADV = null, SPEC = null, SRC = null, PLATFORM = "All", PAGE = 1;
@@ -261,6 +286,11 @@ function readConstraints() {
   if ($("#c_commit").value) c.commitment = $("#c_commit").value;
   if ($("#c_rate").value) c.engineer_week_usd = +$("#c_rate").value;
   if ($("#c_images").checked) c.needs_images = true;
+  const num = (id, k) => { if ($(id).value !== "") c[k] = +$(id).value; };
+  num("#g_tools", "tool_count"); num("#g_mcp", "mcp_servers"); num("#g_calls", "tool_calls_per_request"); num("#g_lat", "api_latency_ms"); num("#g_types", "request_types");
+  if ($("#g_int").value) c.integration = $("#g_int").value;
+  if ($("#g_steps").value) c.steps_known = $("#g_steps").value === "1";
+  [["#g_spec", "specialists"], ["#g_hop", "multi_hop"], ["#g_fresh", "docs_change_often"], ["#g_sql", "structured_data"]].forEach(([id, k]) => { if ($(id).checked) c[k] = true; });
   return c;
 }
 async function reopen() {
@@ -356,6 +386,7 @@ async function advise(body) {
   body.force_sim = $("#forceSim").checked;
   body.harness = $("#harness").checked;
   body.constraints = readConstraints();
+  body.multi_model = $("#multiModel").checked;
   $("#go").disabled = $("#rerun").disabled = true;
   $("#stepper").classList.remove("hidden"); $("#progressWrap").classList.remove("hidden"); $("#bar").style.width = "0";
   document.querySelectorAll("#stepper li").forEach((li) => (li.className = ""));
@@ -402,7 +433,7 @@ function render() {
   $("#confirm").classList.toggle("hidden", !conf.length);
   $("#confirm").innerHTML = conf.length ? `<b>Please confirm:</b> ${conf.map((c) => `${esc(c.label)} read as <b>${esc(String(c.architect))}</b> (rules suggest ${esc(String(c.rules))})`).join(" · ")}. <a href="#" id="fixit">Adjust</a>` : "";
   if (conf.length) $("#fixit").onclick = (e) => { e.preventDefault(); document.querySelector('details[data-d="understood"]').open = true; $("#adjust").classList.remove("hidden"); };
-  PAGE = 1; renderCacheBar(); renderHero(); renderArchitectures(); renderRobust(); renderPlatforms(); renderTable(); renderDetails(); renderHarness(); renderDecision();
+  PAGE = 1; renderCacheBar(); renderHero(); renderArchitectures(); renderSystem(); renderRobust(); renderPlatforms(); renderTable(); renderDetails(); renderHarness(); renderDecision();
 }
 
 function tile(k, v, sub, state) {
@@ -492,7 +523,7 @@ function renderArchitectures() {
       <h3>${esc(d.name)}</h3>
       <p class="what">${esc(d.what)}</p>
       ${chainHtml(d)}
-      <div class="hint" style="margin:8px 0 6px">Model: <b>${esc(modelName(d.models.primary))}</b>${["cascade", "rag_cascade", "workflow", "multi_agent"].includes(d.arch) ? ` · small: ${esc(mlabel(d.models.small))}` : ""}</div>
+      <div class="hint" style="margin:8px 0 6px">${roleLine(d)}</div>
       <div class="tiles t3">
         ${tile("Per month", fmt$(d.monthly), "", chk("cost"))}${tile("Accuracy", pct(d.accuracy), "", chk("accuracy"))}${tile("95% within", dur(d.p95_ms), "", chk("latency"))}
       </div>
@@ -537,6 +568,41 @@ function renderHarness() {
     </tbody></table></div>`;
 }
 
+function roleLine(d) {
+  const roles = (d.roles || []).filter((r) => !r.role.startsWith("fallback"));
+  const uniq = [...new Set(roles.map((r) => r.model))];
+  if (uniq.length <= 1) return `Model: <b>${esc(modelName(uniq[0] || d.models.primary))}</b>${roles.length > 1 ? " for every role" : ""}`;
+  return roles.map((r) => `${esc(r.role)}: <b>${esc(r.model === "jev" ? "Jev" : mlabel(r.model))}</b>`).join(" · ");
+}
+function srcLinks(list) { return (list || []).map((x) => `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title.split(" — ")[0])}</a>`).join(", "); }
+function renderSystem() {
+  const sd = ADV.system, d = ADV.top[0];
+  $("#sysCard").classList.toggle("hidden", !sd);
+  if (!sd) return;
+  const agentic = ["tool_agent", "multi_agent", "router", "workflow", "agentic_rag"].includes(d.arch);
+  $("#sysHint").innerHTML = `How the goal shaped the pattern, which model does what, and how tools and data are connected.` +
+    (agentic ? ` <b>Agentic figures are estimates:</b> per-call accuracy, cost and speed are measured; the number of turns comes from your inputs, and whether the agent picks the right tool isn't tested yet.` : "");
+  const trace = sd.trace.map((t) => `<li><b>${esc(t.fact)}</b> → ${esc(t.rule)}
+      ${t.effects && t.effects.length ? `<div class="effects">${t.effects.map((e) => e.rank ? `<span class="req ${e.rank === 1 ? "ok" : ""}">#${e.rank} ${esc(e.name)}</span>` : `<span class="req" data-tip="${esc(e.ruled_out || "")}">✗ ${esc(e.name)}</span>`).join("")}</div>` : ""}
+      <div class="hint">${srcLinks(t.sources)}</div></li>`).join("");
+  const roles = `<table class="htable"><thead><tr><th>Role</th><th>Model</th><th>Platform</th></tr></thead><tbody>${sd.roles.map((r) => `<tr><td>${esc(r.role)}</td><td><b>${esc(r.model === "jev" ? "Jev" : mlabel(r.model))}</b></td><td class="hint">${esc(r.model === "jev" ? "TypeSafe" : mplat(r.model))}</td></tr>`).join("")}</tbody></table>
+    <p class="hint">${SPEC.multi_model ? "Multi-model on: a separate small model is used only where it's cheaper and good enough." : "Multi-model off: one model for every role."}</p>`;
+  const ig = sd.integration;
+  const tools = ig ? `<p><b>${esc(ig.recommendation)}</b> — ${ig.why.map(esc).join("; ")}.</p>
+    <div class="facts-row"><span class="fact">🔧 ${ig.tool_count} tools · ~${ig.calls_per_request} calls per request · ${ig.api_latency_ms} ms each</span>
+      <span class="fact" data-tip="Tool definitions are sent with every model call and priced in (cached where the platform allows).">📄 ${ig.tools_per_call} tool definitions per call ≈ ${tok(ig.definition_tokens)} tokens</span>
+      ${ig.tool_search ? `<span class="fact warnf">🔎 Use tool search: load definitions on demand</span>` : ""}
+      ${ig.mcp_servers ? `<span class="fact">🔌 ${ig.mcp_servers} MCP server${ig.mcp_servers > 1 ? "s" : ""} to host and govern</span>` : ""}</div>
+    <ul class="facts">${ig.controls.map((c) => `<li>${esc(c)}</li>`).join("")}</ul><div class="hint">${srcLinks(ig.sources)}</div>` : "";
+  const rt = sd.retrieval;
+  const ret = rt ? `<p><b>${esc(rt.strategy)}</b></p><ul class="facts">${rt.components.map((c) => `<li><b>${esc(c.name)}</b>: ${esc(c.why)}. <span class="hint">${srcLinks(c.sources)}</span></li>`).join("")}</ul>
+    <p class="hint">⚠ ${esc(rt.caveat)}</p>` : "";
+  $("#sys").innerHTML = `<div class="sysgrid">
+    <div><h3 class="h3">How the pattern was chosen</h3><ul class="trace">${trace}</ul></div>
+    <div><h3 class="h3">Models per role</h3>${roles}
+      ${ig ? `<h3 class="h3" style="margin-top:14px">Tools and integration</h3>${tools}` : ""}
+      ${rt ? `<h3 class="h3" style="margin-top:14px">Retrieval</h3>${ret}` : ""}</div></div>`;
+}
 function renderRobust() {
   const r = ADV.robustness || [];
   $("#robustCard").classList.toggle("hidden", !r.length);
@@ -628,7 +694,7 @@ function renderDetails() {
     ADV.cases.map((c, i) => `<tr><td style="white-space:normal;min-width:220px">${esc(c.input.slice(0, 120))}</td><td>${esc(c.expected || "—")}</td>` +
       cols.map(([, rs]) => { const r = rs[i]; return `<td class="${r.correct ? "cell-ok" : r.correct === false ? "cell-bad" : ""}" title="${esc(r.answer)}">${r.correct ? "✓" : r.correct === false ? (r.hallucinated ? "⚠" : "✗") : "·"}</td>`; }).join("") + "</tr>").join("") + "</tbody>";
 }
-const KNAME = { rag_cascade: "RAG with small-to-large escalation", single_call: "Single model call", cascade: "Small model first, escalate when unsure", decision_model: "Decision model with LLM fallback",
+const KNAME = { router: "Router to specialised handlers", agentic_rag: "Agentic retrieval", rag_cascade: "RAG with small-to-large escalation", single_call: "Single model call", cascade: "Small model first, escalate when unsure", decision_model: "Decision model with LLM fallback",
   long_context: "Whole documents in the prompt", rag: "RAG", workflow: "Fixed workflow", evaluator_optimizer: "Draft, critique and revise",
   tool_agent: "Tool-using agent", multi_agent: "Orchestrator with specialist agents", batch: "Batch pipeline" };
 
@@ -705,6 +771,16 @@ ${ADV.top.map(arow).join("\n")}
 ${a.why.map((w) => `- ${w}`).join("\n")}
 
 ${ADV.top.slice(1).map((d, i) => `### Architecture ${i + 2}: ${d.name}\n- Trade-off vs architecture 1: ${d.tradeoffs.join("; ")}\n- Choose it if ${d.pick_if}`).join("\n\n")}
+
+## System design (architecture 1)
+${ADV.system ? `### How the pattern was chosen
+${ADV.system.trace.map((t) => `- **${t.fact}** → ${t.rule}${t.effects && t.effects.length ? ` (${t.effects.map((e) => e.rank ? `#${e.rank} ${e.name}` : `${e.name}: ruled out`).join("; ")})` : ""}`).join("\n")}
+
+### Models per role
+${ADV.system.roles.map((r) => `- ${r.role}: ${r.model === "jev" ? "Jev" : modelName(r.model)}`).join("\n")}
+${ADV.system.integration ? `\n### Tools and integration\n- ${ADV.system.integration.recommendation}: ${ADV.system.integration.why.join("; ")}\n- ${ADV.system.integration.tool_count} tools, ~${ADV.system.integration.calls_per_request} calls per request, ${ADV.system.integration.tools_per_call} tool definitions per call${ADV.system.integration.tool_search ? " (use tool search)" : ""}\n${ADV.system.integration.controls.map((c) => `- ${c}`).join("\n")}` : ""}
+${ADV.system.retrieval ? `\n### Retrieval\n- ${ADV.system.retrieval.strategy}\n${ADV.system.retrieval.components.map((c) => `- ${c.name}: ${c.why}`).join("\n")}\n- Caveat: ${ADV.system.retrieval.caveat}` : ""}
+` : "Not available."}
 
 ## Does the answer change?
 ${rob.map((x) => `- ${x.scenario}: ${x.same_arch && x.same_model ? "same recommendation" : `${x.arch_name} on ${x.model_label}`} (${fmt$(x.monthly)}/month)`).join("\n")}

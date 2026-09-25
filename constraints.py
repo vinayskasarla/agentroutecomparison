@@ -17,10 +17,12 @@ _load = lambda name: json.load(open(os.path.join(catalog.KNOWLEDGE_DIR, name))) 
 CAPS = _load("capabilities.json")
 TCO = _load("tco.json")
 QUOTAS = _load("quotas.json")
+AGENTIC = _load("agentic.json")
+TOOL_ARCHS = ("tool_agent", "multi_agent", "router", "agentic_rag")  # the model sees tool definitions
 
 # How many model calls one request makes in each architecture (for peak token load).
 CALLS = {"single_call": 1, "rag": 1, "long_context": 1, "batch": 1, "workflow": 2, "evaluator_optimizer": 3,
-         "tool_agent": 3, "multi_agent": 5}
+         "tool_agent": 3, "multi_agent": 5, "router": 2, "agentic_rag": 3}
 
 DEFAULT_SYSTEM_PROMPT = {"classification": 800, "extraction": 1000, "grounded_qa": 1500, "tool_actions": 3000,
                          "conversation": 1500, "research": 2000, "summarization": 1000, "generation": 1200, "open_qa": 1000}
@@ -61,7 +63,7 @@ def screen(model_ids, spec):
 # ------------------------------------------------------------------ real prompt size
 def prompt_parts(spec, arch):
     """Tokens added to every model call on top of the test case: the static part (cacheable) and the rest."""
-    static = spec["system_prompt_tokens"]
+    static = spec["system_prompt_tokens"] + tool_definition_tokens(spec, arch)
     dynamic = spec["history_tokens"]
     if spec["needs_documents"]:
         if arch == "long_context":
@@ -69,6 +71,28 @@ def prompt_parts(spec, arch):
         else:
             dynamic += spec["context_tokens"]
     return static, dynamic
+
+
+def tools_seen(spec, arch):
+    """How many tool definitions the model is sent per call in this architecture."""
+    n = spec["tool_count"] if spec["needs_tools"] else 0
+    if arch == "agentic_rag":
+        return 2 + (1 if spec["structured_data"] else 0)  # search tools (+ SQL)
+    if arch not in TOOL_ARCHS or not n:
+        return 0
+    if spec["needs_documents"]:
+        n += 1  # a search tool
+    if arch == "router":
+        n = -(-n // max(1, spec["request_types"]))  # each handler sees only its own tools
+    if arch == "multi_agent":
+        n = -(-n // AGENTIC["defaults"]["workers"])  # each specialist sees its share
+    if n >= AGENTIC["thresholds"]["tool_search_at_tools"]:
+        n = 6  # tool search: the search tool plus the few definitions it loads
+    return n
+
+
+def tool_definition_tokens(spec, arch):
+    return tools_seen(spec, arch) * AGENTIC["defaults"]["tokens_per_tool_definition"]
 
 
 def inflate(res, spec, arch, models):
@@ -105,7 +129,7 @@ def wilson(k, n, z=1.96):
 # ------------------------------------------------------------------ peak load
 def peak(d, spec, tokens_per_call):
     """Requests and tokens per minute in the busiest minute, and a check against known quotas."""
-    calls = CALLS.get(d["arch"]) or (1 + (d.get("escalation_rate") or 0))
+    calls = d.get("calls_per_req") or CALLS.get(d["arch"]) or (1 + (d.get("escalation_rate") or 0))
     rpm = spec["requests_per_day"] / 1440 * spec["peak_factor"]
     tpm = rpm * calls * tokens_per_call
     if d["arch"] == "batch":
@@ -122,12 +146,15 @@ def peak(d, spec, tokens_per_call):
 def tco(arch, spec, harness):
     infra = []
     for key, x in TCO["infra"].items():
-        if arch not in x["applies"]:
+        if not _applies(x["applies"], arch, spec):
             continue
         if "monthly" in x:
             reuse = key in spec["existing"]
             infra.append({"id": key, "name": x["name"], "monthly": 0.0 if reuse else x["monthly"],
                           "basis": "you already run one" if reuse else x["basis"], "source": x["source"]})
+        elif "monthly_per_server" in x and spec["mcp_servers"]:
+            infra.append({"id": key, "name": f"{x['name']} ({spec['mcp_servers']})", "monthly": x["monthly_per_server"] * spec["mcp_servers"],
+                          "basis": x["basis"], "source": x["source"]})
     lo, hi = TCO["build_weeks"][arch]
     if harness:
         lo, hi = lo + TCO["harness_build_weeks"][0], hi + TCO["harness_build_weeks"][1]
@@ -136,9 +163,18 @@ def tco(arch, spec, harness):
             "build_usd": [lo * rate, hi * rate] if rate else None}
 
 
+def _applies(rule, arch, spec):
+    if rule == "retrieval":  # any design that searches your documents (all but sending them whole)
+        return spec["needs_documents"] and arch != "long_context"
+    if rule == "mcp":
+        return spec["needs_tools"] and spec["integration"] != "direct" and arch in TOOL_ARCHS + ("workflow",)
+    return arch in rule
+
+
 def embedding_cost_per_req(arch, spec):
     e = TCO["infra"]["embeddings"]
-    return 60 * e["per_1m_tokens"] / 1e6 if arch in e["applies"] else 0.0  # ~60-token query, embedded once
+    searches = AGENTIC["defaults"]["agentic_searches"] if arch == "agentic_rag" else 1
+    return searches * 60 * e["per_1m_tokens"] / 1e6 if _applies(e["applies"], arch, spec) else 0.0  # ~60-token query
 
 
 # ------------------------------------------------------------------ retirements

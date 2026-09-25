@@ -17,61 +17,96 @@
       "name": "Input guardrail",
       "layer": "input",
       "what": "Screens each request for prompt injection, jailbreaks and off-topic use before it can steer the agent.",
-      "sources": ["openai", "aws_agentic"]
+      "sources": [
+        "openai",
+        "aws_agentic"
+      ]
     },
     "output_check": {
       "name": "Output validation and retry",
       "layer": "output",
       "what": "Checks each answer against the expected format or allowed labels and retries once if it fails.",
-      "sources": ["openai", "aws_genai"]
+      "sources": [
+        "openai",
+        "aws_genai"
+      ]
     },
     "grounding": {
       "name": "Grounding check",
       "layer": "output",
       "what": "Confirms each answer is supported by the retrieved documents; unsupported answers are withheld.",
-      "sources": ["aws_genai"]
+      "sources": [
+        "aws_genai"
+      ]
     },
     "tool_gate": {
       "name": "Tool permissions and approval",
       "layer": "runtime",
       "what": "Allow-list of tools, least-privilege credentials, and a person approves irreversible actions.",
-      "sources": ["openai", "anthropic", "aws_agentic"]
+      "sources": [
+        "openai",
+        "anthropic",
+        "aws_agentic"
+      ]
     },
     "limits": {
       "name": "Step, time and spend limits",
       "layer": "runtime",
       "what": "Caps model turns, tokens and spend per request; stops and hands off to a person when hit.",
-      "sources": ["anthropic", "aws_agentic"]
+      "sources": [
+        "anthropic",
+        "aws_agentic"
+      ]
     },
     "calibration": {
       "name": "Escalation monitor",
       "layer": "runtime",
       "what": "Tracks how often the small model escalates and how accurate its confident answers are; alerts on drift.",
-      "sources": ["aws_genai"]
+      "sources": [
+        "aws_genai"
+      ]
     },
     "failover": {
       "name": "Timeouts, retries and failover",
       "layer": "runtime",
       "what": "Times out slow calls, retries with backoff and switches to the fallback model on errors or outages.",
-      "sources": ["aws_genai"]
+      "sources": [
+        "aws_genai"
+      ]
     },
     "tracing": {
       "name": "Tracing and cost metering",
       "layer": "runtime",
       "what": "Logs every step with model, tokens, cost and latency so failures can be replayed and spend charged back.",
-      "sources": ["aws_agentic"]
+      "sources": [
+        "aws_agentic"
+      ]
     },
     "regression": {
       "name": "Regression test suite",
       "layer": "evaluation",
       "what": "This run's test cases become a release gate, re-run before every prompt or model change.",
-      "sources": ["anthropic", "aws_genai"]
+      "sources": [
+        "anthropic",
+        "aws_genai"
+      ]
     },
     "live_eval": {
       "name": "Live quality sampling",
       "layer": "evaluation",
       "what": "A judge call grades a sample of live answers; alerts when accuracy drops.",
-      "sources": ["aws_genai"]
+      "sources": [
+        "aws_genai"
+      ]
+    },
+    "mcp_governance": {
+      "name": "MCP server governance",
+      "layer": "runtime",
+      "what": "Each MCP server authenticated with scoped credentials, tools allow-listed per agent, versions pinned and tool descriptions reviewed on upgrade.",
+      "sources": [
+        "mcp",
+        "aws_agentic"
+      ]
     }
   }
 }
