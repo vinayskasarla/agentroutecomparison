@@ -1,0 +1,629 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLM Path Lab</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb; --surface-2: #f3f2ee;
+  --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,0.10);
+  --accent: #2a78d6; --accent-ink: #ffffff; --good: #006300; --bad: #c42f2f; --good-bg: #e6f4e6; --bad-bg: #fbeaea;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4; --s6: #008300; --crit: #d03b3b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --surface-2: #242422;
+    --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+    --accent: #3987e5; --good: #0ca30c; --bad: #e66767; --good-bg: #13301a; --bad-bg: #3a1a1a;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --surface-2: #242422;
+  --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+  --accent: #3987e5; --good: #0ca30c; --bad: #e66767; --good-bg: #13301a; --bad-bg: #3a1a1a;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1240px; margin: 0 auto; padding: 24px 16px 64px; }
+header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 20px; }
+h1 { font-size: 24px; margin: 0; letter-spacing: -0.01em; }
+h2 { font-size: 16px; margin: 0 0 4px; }
+.sub { color: var(--ink-2); margin: 4px 0 0; max-width: 760px; }
+.hint { color: var(--muted); font-size: 12px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px; margin-bottom: 16px; }
+.card > .hint { margin: 0 0 12px; }
+button { font: inherit; cursor: pointer; }
+.ghost { background: transparent; border: 1px solid var(--border); color: var(--ink-2); border-radius: 8px; padding: 6px 10px; }
+.primary { background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 8px; padding: 10px 20px; font-weight: 600; }
+.primary:disabled { opacity: .55; cursor: progress; }
+.setup { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px 20px; align-items: start; }
+.field label.l { display: block; font-weight: 600; font-size: 12px; color: var(--ink-2); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .04em; }
+select, input[type=number], textarea { width: 100%; font: inherit; color: var(--ink); background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+textarea { min-height: 64px; resize: vertical; }
+.seg { display: inline-flex; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 2px; }
+.seg button { border: 0; background: transparent; color: var(--ink-2); padding: 6px 12px; border-radius: 6px; }
+.seg button.on { background: var(--surface); color: var(--ink); box-shadow: 0 0 0 1px var(--border); font-weight: 600; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--ink-2); margin-top: 6px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.check { display: flex; gap: 8px; align-items: flex-start; margin: 4px 0; color: var(--ink-2); }
+.check input { margin-top: 3px; }
+.runrow { display: flex; align-items: center; gap: 16px; margin-top: 16px; flex-wrap: wrap; }
+.progress { flex: 1; min-width: 200px; height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
+.progress > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+details.assume { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
+details.assume summary { cursor: pointer; color: var(--ink-2); font-weight: 600; }
+.agrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
+.agrid label { font-size: 12px; color: var(--ink-2); display: block; margin-bottom: 4px; }
+
+.paths { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.path { border: 1px solid var(--border); border-radius: 10px; padding: 12px; background: var(--surface); position: relative; }
+.path.off { opacity: .5; }
+.path h3 { margin: 0 0 8px; font-size: 14px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.path p { margin: 8px 0 0; color: var(--ink-2); font-size: 12.5px; }
+.chain { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.node { font-size: 11.5px; padding: 3px 8px; border-radius: 6px; background: var(--surface-2); border: 1px solid var(--border); white-space: nowrap; }
+.node.llm { background: var(--accent); color: #fff; border-color: transparent; }
+.arrow { color: var(--muted); font-size: 12px; }
+.tag { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--good-bg); color: var(--good); font-weight: 600; }
+
+.banner { padding: 10px 14px; border-radius: 8px; background: var(--surface-2); color: var(--ink-2); margin-bottom: 12px; font-size: 13px; }
+.tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+.tile { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+.tile .k { font-size: 12px; color: var(--ink-2); text-transform: uppercase; letter-spacing: .04em; font-weight: 600; }
+.tile .v { font-size: 20px; font-weight: 700; margin: 6px 0 2px; }
+.tile .d { font-size: 12.5px; color: var(--ink-2); }
+.tile.best { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+
+.weights { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin: 4px 0 14px; }
+.weights label { font-size: 12px; color: var(--ink-2); display: flex; justify-content: space-between; }
+.weights input { width: 100%; accent-color: var(--accent); }
+
+.tablewrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--grid); white-space: nowrap; vertical-align: middle; }
+th { font-size: 12px; color: var(--ink-2); font-weight: 600; }
+th .hint { display: block; font-weight: 400; }
+td.num { text-align: right; } th.num { text-align: right; }
+td.win { background: var(--good-bg); color: var(--good); font-weight: 700; }
+.score { display: inline-flex; align-items: center; gap: 8px; }
+.score .bar { width: 70px; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.score .bar > i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+.rank { display: inline-block; width: 20px; height: 20px; line-height: 20px; text-align: center; border-radius: 50%; background: var(--surface-2); font-size: 11px; font-weight: 700; margin-right: 6px; }
+.rank.r1 { background: var(--accent); color: #fff; }
+.yes { color: var(--good); font-weight: 600; } .no { color: var(--bad); font-weight: 600; }
+
+.two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+.chart svg { width: 100%; display: block; overflow: visible; }
+.chart text { fill: var(--ink-2); font-size: 11.5px; }
+.chart .lbl { fill: var(--ink); font-size: 12px; }
+.chart .val { fill: var(--ink-2); font-size: 11.5px; }
+.chart .gridline { stroke: var(--grid); }
+.chart .baseline { stroke: var(--axis); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 8px 0 4px; font-size: 12px; color: var(--ink-2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.cardhead { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+#tip { position: fixed; pointer-events: none; background: var(--surface); color: var(--ink); border: 1px solid var(--border); box-shadow: 0 4px 16px rgba(0,0,0,.15); border-radius: 8px; padding: 8px 10px; font-size: 12px; display: none; z-index: 10; max-width: 280px; }
+
+.matrix td, .matrix th { text-align: center; } .matrix td:first-child, .matrix th:first-child { text-align: left; }
+.ok { color: var(--good); font-weight: 700; } .nope { color: var(--muted); }
+.verdict { font-size: 14px; line-height: 1.6; }
+.verdict ul { margin: 6px 0 0; padding-left: 20px; }
+.drill td { font-size: 12.5px; }
+.cell-ok { color: var(--good); } .cell-bad { color: var(--bad); }
+.pill { font-size: 10.5px; padding: 0 5px; border-radius: 4px; border: 1px solid var(--border); color: var(--ink-2); margin-left: 4px; }
+.hidden { display: none; }
+@media (max-width: 960px) {
+  .setup, .tiles, .weights { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .paths { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .two { grid-template-columns: minmax(0, 1fr); }
+  .agrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 600px) {
+  .setup, .tiles, .weights, .paths, .agrid { grid-template-columns: minmax(0, 1fr); }
+  header { flex-direction: column; }
+}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>LLM Path Lab</h1>
+      <p class="sub">Send the same questions through six different routes of calling a model, then compare
+        <b>accuracy</b>, <b>cost</b>, <b>latency</b>, <b>confidence</b> and <b>governance</b> — to decide the one path every app in the company should use.</p>
+    </div>
+    <button class="ghost" id="theme" title="Toggle light / dark">◐ Theme</button>
+  </header>
+
+  <!-- 1. Setup -->
+  <section class="card">
+    <h2>1 · Choose a model and a workload</h2>
+    <p class="hint">Every route below uses this same model, so any difference you see comes from the route, not the model.</p>
+    <div class="setup">
+      <div class="field">
+        <label class="l" for="model">Model</label>
+        <select id="model"></select>
+        <div id="keychip"></div>
+        <div id="jevchip"></div>
+      </div>
+      <div class="field">
+        <label class="l">Workload</label>
+        <div class="seg" id="workload">
+          <button data-v="suite" class="on">Graded eval suite</button>
+          <button data-v="custom">My own prompt</button>
+        </div>
+        <div class="hint" id="workloadHint" style="margin-top:6px">10 questions with known answers, so accuracy is scored automatically.</div>
+        <textarea id="prompt" class="hidden" placeholder="e.g. Summarise our refund policy for a customer in two sentences."></textarea>
+      </div>
+      <div class="field">
+        <label class="l">Traffic repeats</label>
+        <div class="seg" id="passes">
+          <button data-v="1">1×</button><button data-v="2" class="on">2×</button><button data-v="3">3×</button>
+        </div>
+        <div class="hint" style="margin-top:6px">How many times the same questions arrive. Repeats are what caches save money on.</div>
+      </div>
+      <div class="field">
+        <label class="l">Scenario</label>
+        <label class="check"><input type="checkbox" id="fault"> <span>Inject provider outages (20% of calls fail)<br><span class="hint">Shows which routes survive with failover.</span></span></label>
+        <label class="check"><input type="checkbox" id="forceSim"> <span>Force simulation<br><span class="hint">No API spend; LLM step is modeled.</span></span></label>
+      </div>
+    </div>
+    <details class="assume">
+      <summary>Assumptions (prices, network, cache) — edit to match your company</summary>
+      <div class="agrid">
+        <div><label>Input price, $ / 1M tokens</label><input type="number" id="pin" step="0.01"></div>
+        <div><label>Output price, $ / 1M tokens</label><input type="number" id="pout" step="0.01"></div>
+        <div><label>Network RTT per service hop, ms</label><input type="number" id="rtt" step="0.5"></div>
+        <div><label>Semantic-cache match threshold (0–1)</label><input type="number" id="thr" step="0.05" min="0.3" max="1"></div>
+        <div><label>Requests per day (for monthly cost)</label><input type="number" id="rpd" step="1000"></div>
+        <div><label>Jev confidence needed to skip the LLM (0–1)</label><input type="number" id="jthr" step="0.05" min="0" max="1"></div>
+        <div><label>Jev input price, $ / 1M tokens</label><input type="number" id="jprice" step="0.001"></div>
+      </div>
+      <p class="hint" style="margin-top:10px">Prices are public list prices for the selected model — override with your contract rate. Middleware infra cost per 1K requests:
+        <span id="infraList"></span>. Lower the semantic threshold to 0.7 to watch the cache answer "Austria" with Australia's capital.</p>
+    </details>
+    <div class="runrow">
+      <button class="primary" id="run">Run comparison</button>
+      <div class="progress"><div id="bar"></div></div>
+      <span class="hint" id="status">Ready.</span>
+    </div>
+  </section>
+
+  <!-- 2. Routes -->
+  <section class="card">
+    <h2>2 · The routes being compared</h2>
+    <p class="hint">Untick a route to leave it out. Services are real HTTP hops on this server, so their overhead is measured, not guessed.</p>
+    <div class="paths" id="paths"></div>
+  </section>
+
+  <!-- 3. Results -->
+  <section id="results" class="hidden">
+    <div class="banner" id="modeBanner"></div>
+    <div class="tiles" id="tiles"></div>
+
+    <section class="card">
+      <div class="cardhead">
+        <div><h2>3 · Scoreboard</h2>
+          <p class="hint" style="margin:0 0 10px">Drag the sliders to say what matters most; the ranking and "Best overall" update instantly. Green cell = best in column.</p></div>
+      </div>
+      <div class="weights" id="weights"></div>
+      <div class="tablewrap"><table id="board"></table></div>
+    </section>
+
+    <div class="two">
+      <section class="card chart">
+        <div class="cardhead">
+          <div><h2>Where the time goes</h2><p class="hint" style="margin:0">Average time per request, split by step.</p></div>
+          <div class="seg" id="latView"><button data-v="all" class="on">Whole request</button><button data-v="over">Overhead only</button></div>
+        </div>
+        <div class="legend" id="latLegend"></div>
+        <div id="latChart"></div>
+      </section>
+      <section class="card chart">
+        <div class="cardhead"><div><h2>Monthly cost</h2><p class="hint" style="margin:0" id="costHint"></p></div></div>
+        <div class="legend"><span><i style="background:var(--s1)"></i>Model tokens</span><span><i style="background:var(--s2)"></i>Platform infra</span></div>
+        <div id="costChart"></div>
+      </section>
+    </div>
+
+    <section class="card">
+      <h2>What a platform team gets from each route</h2>
+      <p class="hint">Capabilities every app inherits for free when it goes through the route — the "enablement" part of the decision.</p>
+      <div class="tablewrap"><table class="matrix" id="matrix"></table></div>
+    </section>
+
+    <section class="card verdict">
+      <h2>Recommendation</h2>
+      <div id="verdict"></div>
+    </section>
+
+    <section class="card">
+      <details>
+        <summary style="cursor:pointer;font-weight:600">Every call, answer by answer</summary>
+        <p class="hint">✓ correct · ✗ wrong · ⚡ cache hit · Jev = answered by Jev · ↑ LLM = Jev unsure, escalated · ↘ routed to small model · ⟲ failed over to another provider · ⚠ error</p>
+        <div class="tablewrap"><table class="drill" id="drill"></table></div>
+      </details>
+    </section>
+  </section>
+</main>
+<div id="tip"></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const STAGES = [
+  { kind: "llm", label: "LLM", color: "var(--s1)" },
+  { kind: "gateway", label: "AI Gateway", color: "var(--s2)" },
+  { kind: "cache", label: "Cache", color: "var(--s3)" },
+  { kind: "hop", label: "Network hop", color: "var(--s4)" },
+  { kind: "jev", label: "Jev (System 1)", color: "var(--s5)" },
+  { kind: "runtime", label: "Agent runtime", color: "var(--s6)" },
+  { kind: "error", label: "Failed attempt", color: "var(--crit)" },
+];
+let CFG, RUN = null, state = { workload: "suite", passes: 2, latView: "all",
+  weights: { accuracy: 40, cost: 25, latency: 20, governance: 15 } };
+
+// ---------- theme
+(function theme() {
+  let t = null; try { t = localStorage.getItem("plab-theme"); } catch (e) {}
+  if (t) document.documentElement.dataset.theme = t;
+  $("#theme").onclick = () => {
+    const dark = document.documentElement.dataset.theme
+      ? document.documentElement.dataset.theme === "dark"
+      : matchMedia("(prefers-color-scheme: dark)").matches;
+    const next = dark ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem("plab-theme", next); } catch (e) {}
+  };
+})();
+
+// ---------- segmented controls
+function seg(id, onChange) {
+  $(id).addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    $(id).querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+    onChange(b.dataset.v);
+  });
+}
+seg("#workload", (v) => {
+  state.workload = v;
+  $("#prompt").classList.toggle("hidden", v !== "custom");
+  $("#workloadHint").textContent = v === "suite"
+    ? "10 questions with known answers, so accuracy is scored automatically."
+    : "Free-form prompt. Accuracy can't be graded. Jev can't write text, so 'Jev only' is skipped and the cascade uses Jev to pick the model tier.";
+});
+seg("#passes", (v) => (state.passes = +v));
+seg("#latView", (v) => { state.latView = v; if (RUN) renderLatency(); });
+
+// ---------- init
+fetch("/api/config").then((r) => r.json()).then((cfg) => {
+  CFG = cfg;
+  const sel = $("#model");
+  for (const [pid, p] of Object.entries(cfg.providers)) {
+    const g = document.createElement("optgroup"); g.label = p.label;
+    cfg.models.filter((m) => m.provider === pid).forEach((m) => {
+      const o = document.createElement("option"); o.value = m.id; o.textContent = `${m.label}  ·  $${m.in} / $${m.out}`;
+      g.appendChild(o);
+    });
+    sel.appendChild(g);
+  }
+  sel.value = "claude-sonnet-5";
+  sel.onchange = onModel; $("#forceSim").onchange = onModel; onModel();
+  const a = cfg.assumptions;
+  $("#jthr").value = a.jev_threshold; $("#jprice").value = a.jev_price_in;
+  $("#jevchip").innerHTML = cfg.jev.has_key
+    ? `<span class="chip"><i class="dot" style="background:var(--good)"></i>Jev live · ${cfg.jev.env} found</span>`
+    : `<span class="chip"><i class="dot" style="background:var(--muted)"></i>Jev simulated · set ${cfg.jev.env} for live</span>`;
+  $("#rtt").value = a.hop_rtt_ms; $("#thr").value = a.semantic_threshold; $("#rpd").value = a.requests_per_day;
+  $("#infraList").textContent = cfg.paths.map((p) => `${p.name} $${a.infra_per_1k[p.id]}`).join(" · ");
+  renderPaths();
+});
+
+function modelInfo(id) { return CFG.models.find((m) => m.id === id); }
+function onModel() {
+  const m = modelInfo($("#model").value), p = CFG.providers[m.provider];
+  $("#pin").value = m.in; $("#pout").value = m.out;
+  const live = CFG.keys[m.provider] && !$("#forceSim").checked;
+  $("#keychip").innerHTML = live
+    ? `<span class="chip"><i class="dot" style="background:var(--good)"></i>Live calls · ${p.env} found</span>`
+    : `<span class="chip"><i class="dot" style="background:var(--muted)"></i>Simulated · ${CFG.keys[m.provider] ? "forced" : "set " + p.env + " for live"}</span>`;
+}
+
+function renderPaths() {
+  $("#paths").innerHTML = CFG.paths.map((p) => `
+    <label class="path" data-id="${p.id}">
+      <h3><span>${esc(p.name)} ${p.id === "platform" ? '<span class="tag">enablement platform</span>' : ""}</span>
+        <input type="checkbox" checked data-path="${p.id}"></h3>
+      <div class="chain">${p.chain.map((n) => `<span class="node ${n === "LLM" ? "llm" : ""}">${esc(n)}</span>`).join('<span class="arrow">→</span>')}</div>
+      <p>${esc(p.blurb)}</p>
+    </label>`).join("");
+  $("#paths").querySelectorAll("input").forEach((i) => i.onchange = () => i.closest(".path").classList.toggle("off", !i.checked));
+}
+
+// ---------- run
+$("#run").onclick = async () => {
+  const paths = [...document.querySelectorAll("[data-path]:checked")].map((i) => i.dataset.path);
+  if (!paths.length) return alert("Pick at least one route.");
+  if (state.workload === "custom" && !$("#prompt").value.trim()) return alert("Type a prompt first.");
+  const infra = CFG.assumptions.infra_per_1k;
+  const body = {
+    model: $("#model").value, workload: state.workload, prompt: $("#prompt").value, passes: state.passes, paths,
+    force_sim: $("#forceSim").checked, fault_rate: $("#fault").checked ? 0.2 : 0,
+    assumptions: { jev_threshold: +$("#jthr").value, hop_rtt_ms: +$("#rtt").value, semantic_threshold: +$("#thr").value, requests_per_day: +$("#rpd").value },
+  };
+  RUN = { body, paths, calls: [], meta: null, price: { [body.model]: { in: +$("#pin").value, out: +$("#pout").value } },
+    jevPrice: +$("#jprice").value, infra };
+  $("#run").disabled = true; $("#status").textContent = "Starting…"; $("#bar").style.width = "0";
+  try {
+    const resp = await fetch("/api/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const reader = resp.body.getReader(), dec = new TextDecoder(); let buf = "", lastDraw = 0;
+    while (true) {
+      const { value, done } = await reader.read(); if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl; while ((nl = buf.indexOf("\n")) >= 0) {
+        const ev = JSON.parse(buf.slice(0, nl)); buf = buf.slice(nl + 1);
+        if (ev.type === "meta") { RUN.meta = ev; RUN.paths = ev.paths; }
+        if (ev.type === "call") RUN.calls.push(ev);
+      }
+      if (RUN.meta) {
+        $("#bar").style.width = (100 * RUN.calls.length / RUN.meta.total) + "%";
+        $("#status").textContent = `${RUN.calls.length} / ${RUN.meta.total} calls`;
+        if (RUN.calls.length && performance.now() - lastDraw > 400) { render(); lastDraw = performance.now(); }
+      }
+    }
+    render(); $("#status").textContent = `Done · ${RUN.calls.length} calls`;
+    $("#results").scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (e) { $("#status").textContent = "Failed: " + e.message; }
+  $("#run").disabled = false;
+};
+
+// ---------- aggregation
+function priceOf(model) { return RUN.price[model] || modelInfo(model) || { in: 0, out: 0 }; }
+function pct(arr, p) { if (!arr.length) return 0; const s = [...arr].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; }
+function mean(arr) { return arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null; }
+
+function aggregate() {
+  const rpd = RUN.body.assumptions.requests_per_day;
+  return RUN.paths.map((pid) => {
+    const calls = RUN.calls.filter((c) => c.path === pid), ok = calls.filter((c) => !c.error);
+    const graded = ok.filter((c) => c.correct !== null);
+    const accuracy = graded.length ? graded.filter((c) => c.correct).length / graded.length : null;
+    const conf = mean(ok.filter((c) => c.confidence != null).map((c) => +c.confidence));
+    const lat = calls.map((c) => c.latency_ms);
+    const byKind = {}; STAGES.forEach((s) => (byKind[s.kind] = 0));
+    calls.forEach((c) => c.stages.forEach((s) => (byKind[s.kind] = (byKind[s.kind] || 0) + s.ms)));
+    Object.keys(byKind).forEach((k) => (byKind[k] = calls.length ? byKind[k] / calls.length : 0));
+    // overhead = time not spent producing the answer; Jev's time counts as the answer when Jev answered
+    const overhead = mean(calls.map((c) => c.stages.filter((s) => s.kind !== "llm" && s.kind !== "error"
+      && !(s.kind === "jev" && c.decided_by === "jev")).reduce((a, s) => a + s.ms, 0))) || 0;
+    const tokenCost = calls.reduce((a, c) => { const p = priceOf(c.model);
+      return a + (c.in_tokens * p.in + c.out_tokens * p.out + (c.jev_in_tokens || 0) * RUN.jevPrice) / 1e6; }, 0);
+    const perReqTokens = calls.length ? tokenCost / calls.length : 0;
+    const perReqInfra = (RUN.infra[pid] || 0) / 1000;
+    const answersByQ = {};
+    ok.forEach((c) => (answersByQ[c.qid] = answersByQ[c.qid] || []).push(String(c.answer).trim().toLowerCase()));
+    const multi = Object.values(answersByQ).filter((a) => a.length > 1);
+    return {
+      id: pid, path: CFG.paths.find((p) => p.id === pid), n: calls.length,
+      accuracy, conf, calGap: accuracy != null && conf != null ? Math.abs(conf - accuracy * 100) : null,
+      p50: pct(lat, 0.5), p95: pct(lat, 0.95), overhead, byKind,
+      perReq: perReqTokens + perReqInfra, per1k: (perReqTokens + perReqInfra) * 1000,
+      monthlyTokens: perReqTokens * rpd * 30, monthlyInfra: perReqInfra * rpd * 30,
+      cacheRate: calls.length ? calls.filter((c) => c.cache).length / calls.length : 0,
+      avoided: calls.length ? calls.filter((c) => !c.error && (c.cache || c.decided_by === "jev")).length / calls.length : 0,
+      jevShare: calls.length ? calls.filter((c) => c.decided_by === "jev").length / calls.length : 0,
+      escalated: calls.filter((c) => c.escalated).length,
+      success: calls.length ? ok.length / calls.length : 0,
+      consistency: multi.length ? multi.filter((a) => a.every((x) => x === a[0])).length / multi.length : null,
+      piiSent: calls.some((c) => c.pii_sent), caps: CFG.path_caps[pid].length,
+      routed: calls.filter((c) => c.routed_to).length, failovers: calls.filter((c) => c.failover).length,
+      simulated: calls.some((c) => c.simulated),
+    };
+  });
+}
+
+function score(rows) {
+  const w = { ...state.weights }; if (rows.every((r) => r.accuracy == null)) w.accuracy = 0;
+  const tot = Object.values(w).reduce((a, b) => a + b, 0) || 1;
+  const minCost = Math.min(...rows.map((r) => r.perReq)), minLat = Math.min(...rows.map((r) => r.p50));
+  rows.forEach((r) => {
+    const s = { accuracy: (r.accuracy ?? 0) * r.success, cost: r.perReq > 0 ? minCost / r.perReq : 1,
+      latency: r.p50 > 0 ? minLat / r.p50 : 1, governance: r.caps / CFG.capabilities.length };
+    r.score = 100 * Object.keys(w).reduce((a, k) => a + w[k] * s[k], 0) / tot;
+  });
+  return [...rows].sort((a, b) => b.score - a.score);
+}
+
+// ---------- rendering
+const fmt$ = (v) => v >= 1000 ? "$" + Math.round(v).toLocaleString() : v >= 1 ? "$" + v.toFixed(2) : v >= 0.01 ? "$" + v.toFixed(3) : "$" + v.toFixed(4);
+const fmtMs = (v) => v >= 1000 ? (v / 1000).toFixed(2) + " s" : v >= 10 ? Math.round(v) + " ms" : v.toFixed(1) + " ms";
+const fmtPct = (v) => v == null ? "—" : Math.round(v * 100) + "%";
+
+function render() {
+  $("#results").classList.remove("hidden");
+  const m = RUN.meta, model = modelInfo(RUN.body.model);
+  const sim = RUN.calls.some((c) => c.simulated);
+  $("#modeBanner").innerHTML = `<b>${esc(model.label)}</b> · ${sim
+    ? "LLM step is <b>simulated</b> (no API key, or forced) — model latency, tokens and accuracy follow a calibrated profile."
+    : "LLM step is <b>live</b> — real provider calls, real tokens."} Jev is <b>${m.jev_live ? "live" : "simulated"}</b>${m.jev_live ? "" : " (calibrated profile: strong on simple items, weaker on multi-step)"}. Service hops, guardrails and cache lookups are <b>real and measured</b> on this server
+    · cache backend: <b>${esc(m.cache_backend)}</b> · hop RTT ${m.assumptions.hop_rtt_ms} ms.`;
+  const rows = score(aggregate());
+  renderTiles(rows); renderWeights(rows); renderBoard(rows); renderLatency(); renderCost(rows); renderMatrix(); renderVerdict(rows); renderDrill();
+}
+
+function best(rows, key, dir) {
+  const valid = rows.filter((r) => r[key] != null);
+  if (!valid.length) return null;
+  return valid.reduce((a, b) => (dir > 0 ? b[key] > a[key] : b[key] < a[key]) ? b : a);
+}
+
+function renderTiles(rows) {
+  const acc = best(rows, "accuracy", 1), cheap = best(rows, "perReq", -1), fast = best(rows, "p50", -1), top = rows[0];
+  const t = (k, r, v, d, cls = "") => `<div class="tile ${cls}"><div class="k">${k}</div><div class="v">${r ? esc(r.path.name) : "—"}</div><div class="d">${v}${d ? " · " + d : ""}</div></div>`;
+  const tiedAcc = acc ? rows.filter((r) => r.accuracy === acc.accuracy).length : 0;
+  $("#tiles").innerHTML =
+    t("Most accurate", acc, acc ? fmtPct(acc.accuracy) + " correct" : "not graded", tiedAcc > 1 ? `tied with ${tiedAcc - 1} other${tiedAcc > 2 ? "s" : ""}` : "") +
+    t("Lowest cost", cheap, cheap ? fmt$(cheap.per1k) + " / 1K requests" : "") +
+    t("Fastest (median)", fast, fast ? fmtMs(fast.p50) : "") +
+    t("Best overall", top, top ? `score ${Math.round(top.score)} / 100` : "", "your weights", "best");
+}
+
+function renderWeights() {
+  if ($("#weights").childElementCount) return;
+  const names = { accuracy: "Accuracy", cost: "Cost", latency: "Speed", governance: "Governance" };
+  $("#weights").innerHTML = Object.keys(state.weights).map((k) => `
+    <div><label><span>${names[k]}</span><b id="w-${k}">${state.weights[k]}</b></label>
+    <input type="range" min="0" max="100" value="${state.weights[k]}" data-w="${k}"></div>`).join("");
+  $("#weights").querySelectorAll("input").forEach((i) => i.oninput = () => {
+    state.weights[i.dataset.w] = +i.value; $("#w-" + i.dataset.w).textContent = i.value;
+    const rows = score(aggregate()); renderTiles(rows); renderBoard(rows); renderVerdict(rows);
+  });
+}
+
+function renderBoard(rows) {
+  const cols = [
+    ["Accuracy", "correct answers", (r) => fmtPct(r.accuracy), "accuracy", 1],
+    ["Confidence", "Jev: calibrated · LLM: self-rated", (r) => r.conf == null ? "—" : Math.round(r.conf) + "%", null],
+    ["Calibration gap", "|confidence − accuracy|", (r) => r.calGap == null ? "—" : Math.round(r.calGap) + " pts", "calGap", -1],
+    ["Latency p50", "median request", (r) => fmtMs(r.p50), "p50", -1],
+    ["Latency p95", "slowest 5%", (r) => fmtMs(r.p95), "p95", -1],
+    ["Overhead", "added by the route", (r) => fmtMs(r.overhead), "overhead", -1],
+    ["Cost / 1K req", "tokens + infra", (r) => fmt$(r.per1k), "per1k", -1],
+    ["LLM calls avoided", "cache or Jev answered", (r) => fmtPct(r.avoided), "avoided", 1],
+    ["Success", "calls answered", (r) => fmtPct(r.success), "success", 1],
+    ["Consistency", "same answer on repeat", (r) => fmtPct(r.consistency), "consistency", 1],
+    ["PII to provider", "raw email/card sent", (r) => r.piiSent ? '<span class="no">Yes</span>' : '<span class="yes">No</span>', null],
+    ["Governance", "capabilities", (r) => `${r.caps} / ${CFG.capabilities.length}`, "caps", 1],
+  ];
+  const winners = {};
+  cols.forEach(([, , , key, dir]) => { if (!key) return; const b = best(rows, key, dir);
+    if (b && rows.filter((r) => r[key] === b[key]).length < rows.length) winners[key] = b[key]; });
+  $("#board").innerHTML = `<thead><tr><th>Route</th><th>Overall</th>${cols.map(([h, s]) => `<th class="num">${h}<span class="hint">${s}</span></th>`).join("")}</tr></thead><tbody>` +
+    rows.map((r, i) => `<tr><td><span class="rank ${i === 0 ? "r1" : ""}">${i + 1}</span><b>${esc(r.path.name)}</b><div class="hint" style="margin-left:26px">${esc(r.path.short)}</div></td>
+      <td><span class="score"><span class="bar"><i style="width:${r.score}%"></i></span><b>${Math.round(r.score)}</b></span></td>
+      ${cols.map(([, , f, key]) => `<td class="num ${key && winners[key] !== undefined && r[key] === winners[key] ? "win" : ""}">${f(r)}</td>`).join("")}</tr>`).join("") + "</tbody>";
+}
+
+// generic horizontal stacked bar chart (inline SVG)
+function hbar(el, rows, segs, fmt, tipFn) {
+  const W = el.clientWidth || 520, valW = 64, barH = 18, gap = 14, top = 6;
+  const labelW = Math.min(W < 440 ? 118 : 230, Math.max(90, ...rows.map((r) => r.label.length * 6.6 + 14)));
+  const plotW = Math.max(80, W - labelW - valW);
+  const max = Math.max(...rows.map((r) => segs.reduce((a, s) => a + (r.vals[s.key] || 0), 0)), 1e-9);
+  const H = top + rows.length * (barH + gap) + 18;
+  const ticks = plotW < 300 ? [0, 0.5, 1] : [0, 0.25, 0.5, 0.75, 1];
+  let svg = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img">`;
+  ticks.forEach((t) => { const x = labelW + t * plotW;
+    svg += `<line class="gridline" x1="${x}" x2="${x}" y1="${top - 4}" y2="${H - 18}"/><text x="${x}" y="${H - 4}" text-anchor="middle">${fmt(max * t)}</text>`; });
+  rows.forEach((r, i) => {
+    const y = top + i * (barH + gap); let x = labelW; const total = segs.reduce((a, s) => a + (r.vals[s.key] || 0), 0);
+    svg += `<text class="lbl" x="${labelW - 10}" y="${y + barH / 2 + 4}" text-anchor="end">${esc(r.label.length * 6.6 > labelW - 12 ? r.label.slice(0, Math.floor((labelW - 12) / 6.6) - 1) + "…" : r.label)}</text>`;
+    const drawn = segs.filter((s) => (r.vals[s.key] || 0) / max * plotW >= 0.5);
+    drawn.forEach((s, j) => {
+      const w = (r.vals[s.key] / max) * plotW, last = j === drawn.length - 1;
+      const ww = Math.max(0.5, w - (last ? 0 : 2));
+      const rx = last ? Math.min(4, ww / 2) : 0;
+      svg += last && ww > 4
+        ? `<path d="M${x},${y}h${ww - rx}a${rx},${rx} 0 0 1 ${rx},${rx}v${barH - 2 * rx}a${rx},${rx} 0 0 1 -${rx},${rx}h-${ww - rx}z" fill="${s.color}" data-tip="${esc(tipFn(r, s))}"/>`
+        : `<rect x="${x}" y="${y}" width="${ww}" height="${barH}" fill="${s.color}" data-tip="${esc(tipFn(r, s))}"/>`;
+      x += w;
+    });
+    svg += `<rect x="${labelW}" y="${y - 3}" width="${plotW}" height="${barH + 6}" fill="transparent" data-tip="${esc(tipFn(r, null))}" style="pointer-events:${drawn.length ? "none" : "all"}"/>`;
+    svg += `<text class="val" x="${labelW + (total / max) * plotW + 6}" y="${y + barH / 2 + 4}">${fmt(total)}</text>`;
+  });
+  svg += `<line class="baseline" x1="${labelW}" x2="${labelW}" y1="${top - 4}" y2="${H - 18}"/></svg>`;
+  el.innerHTML = svg;
+}
+
+function renderLatency() {
+  const rows = score(aggregate()).sort((a, b) => RUN.paths.indexOf(a.id) - RUN.paths.indexOf(b.id));
+  const segs = STAGES.filter((s) => state.latView === "all" || (s.kind !== "llm" && s.kind !== "error"))
+    .filter((s) => rows.some((r) => r.byKind[s.kind] > 0)).map((s) => ({ key: s.kind, color: s.color, label: s.label }));
+  $("#latLegend").innerHTML = segs.map((s) => `<span><i style="background:${s.color}"></i>${s.label}</span>`).join("");
+  hbar($("#latChart"), rows.map((r) => ({ label: r.path.name, vals: r.byKind })), segs, fmtMs,
+    (r, s) => s ? `${r.label} · ${s.label}: ${fmtMs(r.vals[s.key])} avg` : `${r.label}: no overhead`);
+}
+
+function renderCost(rows) {
+  rows = [...rows].sort((a, b) => RUN.paths.indexOf(a.id) - RUN.paths.indexOf(b.id));
+  $("#costHint").textContent = `Projected at ${(+RUN.body.assumptions.requests_per_day).toLocaleString()} requests/day, with this run's cache-hit mix.`;
+  hbar($("#costChart"), rows.map((r) => ({ label: r.path.name, vals: { tok: r.monthlyTokens, infra: r.monthlyInfra } })),
+    [{ key: "tok", color: "var(--s1)", label: "Model tokens" }, { key: "infra", color: "var(--s2)", label: "Platform infra" }],
+    fmt$, (r, s) => s ? `${r.label} · ${s.label}: ${fmt$(r.vals[s.key])}/month` : r.label);
+}
+
+function renderMatrix() {
+  const ps = RUN.paths.map((id) => CFG.paths.find((p) => p.id === id));
+  $("#matrix").innerHTML = `<thead><tr><th>Capability</th>${ps.map((p) => `<th>${esc(p.name)}</th>`).join("")}</tr></thead><tbody>` +
+    CFG.capabilities.map(([k, label]) => `<tr><td>${esc(label)}</td>${ps.map((p) => CFG.path_caps[p.id].includes(k)
+      ? '<td class="ok" aria-label="yes">✓</td>' : '<td class="nope" aria-label="no">—</td>').join("")}</tr>`).join("") + "</tbody>";
+}
+
+function renderVerdict(rows) {
+  const top = rows[0], by = Object.fromEntries(rows.map((r) => [r.id, r])), d = by.direct;
+  const pts = [];
+  if (d) rows.filter((r) => !["direct", "jev", "jev_llm"].includes(r.id)).forEach((r) => {
+    const extra = r.overhead - d.overhead;
+    if (Math.abs(extra) >= 0.5) pts.push(`<b>${esc(r.path.name)}</b> adds ${fmtMs(Math.max(0, extra))} of routing overhead per call — ${d.p50 ? ((Math.max(0, extra) / d.p50) * 100).toFixed(1) : "?"}% of the median request, because the model itself dominates latency.`);
+  });
+  const accs = rows.filter((r) => r.accuracy != null);
+  if (accs.length > 1) {
+    const hi = Math.max(...accs.map((r) => r.accuracy)), lo = Math.min(...accs.map((r) => r.accuracy));
+    pts.push(hi - lo < 0.001 ? "Accuracy is identical across routes: the route does not make the model smarter — the model does."
+      : `Accuracy spreads ${fmtPct(lo)}–${fmtPct(hi)}. Differences come from Jev picking the wrong option, routing easy prompts to a smaller model, semantic-cache matches, or failed calls. Check the drill-down.`);
+  }
+  const cheap = best(rows, "perReq", -1);
+  if (cheap && d && cheap.id !== "direct") pts.push(`<b>${esc(cheap.path.name)}</b> is ${Math.round((1 - cheap.perReq / d.perReq) * 100)}% cheaper than calling direct (${fmt$(cheap.monthlyTokens + cheap.monthlyInfra)} vs ${fmt$(d.monthlyTokens + d.monthlyInfra)} a month).`);
+  if (rows.some((r) => r.piiSent)) pts.push(`Routes without a guardrail layer (${rows.filter((r) => r.piiSent).map((r) => esc(r.path.name)).join(", ")}) sent a raw email address and card number to the provider.`);
+  if (by.jev && by.jev.accuracy != null) {
+    const jl = by.jev_llm;
+    pts.push(`<b>Jev only</b> scored ${fmtPct(by.jev.accuracy)} at ${fmtMs(by.jev.p50)} median and ${fmt$(by.jev.per1k)} per 1K requests. It's a decision model, so it picks an answer from options instead of writing one.`);
+    if (jl) pts.push(`<b>Jev → LLM cascade</b> let Jev answer ${fmtPct(jl.jevShare)} of requests itself and escalated ${jl.escalated} low-confidence ones to the LLM: ${fmtPct(jl.accuracy)} accurate${d ? ` vs ${fmtPct(d.accuracy)} direct` : ""}, at ${fmt$(jl.per1k)} vs ${d ? fmt$(d.per1k) : "?"} per 1K requests. Raise the Jev threshold for more accuracy, lower it for more savings.`);
+  }
+  if (by.jev && by.jev.calGap != null && d && d.calGap != null) pts.push(`Confidence you can act on: Jev's calibration gap is ${Math.round(by.jev.calGap)} pts vs ${Math.round(d.calGap)} pts for the LLM's self-rated confidence.`);
+  const fo = rows.filter((r) => r.failovers > 0);
+  if (RUN.body.fault_rate) pts.push(`With 20% provider outages, success was ${rows.map((r) => `${esc(r.path.name)} ${fmtPct(r.success)}`).join(", ")}${fo.length ? " — gateway routes recovered by failing over to another provider" : ""}.`);
+  $("#verdict").innerHTML = `<p>With your weights, <b>${esc(top.path.name)}</b> (${esc(top.path.short)}) ranks first at <b>${Math.round(top.score)}/100</b>.
+    ${top.caps >= 7 ? "It also gives every app the shared guardrails, metering and failover a company-wide enablement platform needs." : "Note it gives apps little shared governance — each team would rebuild keys, guardrails and metering."}</p><ul>${pts.map((p) => `<li>${p}</li>`).join("")}</ul>`;
+}
+
+function renderDrill() {
+  const items = RUN.meta.items, passes = Math.max(...RUN.calls.map((c) => c.pass), 1);
+  const ps = RUN.paths.map((id) => CFG.paths.find((p) => p.id === id));
+  let html = `<thead><tr><th>Question</th><th>Pass</th>${ps.map((p) => `<th>${esc(p.name)}</th>`).join("")}</tr></thead><tbody>`;
+  for (let pass = 1; pass <= passes; pass++) items.forEach((it) => {
+    html += `<tr><td style="white-space:normal;min-width:240px">${esc(it.q)}${it.accept ? `<div class="hint">expected: ${esc(it.accept[0])}</div>` : ""}</td><td>${pass}</td>`;
+    ps.forEach((p) => {
+      const c = RUN.calls.find((x) => x.path === p.id && x.qid === it.id && x.pass === pass);
+      if (!c) { html += "<td class='hint'>…</td>"; return; }
+      const mark = c.error ? "⚠" : c.correct === true ? "✓" : c.correct === false ? "✗" : "";
+      const cls = c.error || c.correct === false ? "cell-bad" : c.correct ? "cell-ok" : "";
+      html += `<td class="${cls}" title="${esc(c.error || c.answer)} · confidence ${c.confidence ?? "—"} · ${esc(c.model)}">${mark} ${esc(String(c.error ? "error" : c.answer).slice(0, 18))}
+        <span class="hint">${fmtMs(c.latency_ms)}</span>${c.cache ? `<span class="pill">⚡ ${esc(c.cache)}</span>` : ""}${c.routed_to ? '<span class="pill">↘ small</span>' : ""}${c.decided_by === "jev" ? '<span class="pill">Jev</span>' : ""}${c.escalated ? '<span class="pill">↑ LLM</span>' : ""}${c.failover ? '<span class="pill">⟲</span>' : ""}</td>`;
+    });
+    html += "</tr>";
+  });
+  $("#drill").innerHTML = html + "</tbody>";
+}
+
+// tooltip
+document.addEventListener("mousemove", (e) => {
+  const t = e.target.closest && e.target.closest("[data-tip]"), tip = $("#tip");
+  if (!t) { tip.style.display = "none"; return; }
+  tip.textContent = t.dataset.tip; tip.style.display = "block";
+  tip.style.left = Math.min(e.clientX + 12, innerWidth - 290) + "px"; tip.style.top = e.clientY + 12 + "px";
+});
+addEventListener("resize", () => { if (RUN && RUN.calls.length) { renderLatency(); renderCost(score(aggregate())); } });
+</script>
+</body>
+</html>
