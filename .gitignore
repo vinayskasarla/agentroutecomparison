@@ -4,5 +4,6 @@ __pycache__/
 venv/
 .env
 .env.*
+!.env.example
 dump.rdb
 .DS_Store
