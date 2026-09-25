@@ -1,0 +1,8 @@
+# Copy to terraform.tfvars and adjust. All values are optional.
+region             = "us-east-1"
+name               = "agentroutecomparison"
+cpu                = "512"
+memory             = "1024"
+budget_email       = "" # e.g. "you@example.com" to get budget alerts
+monthly_budget_usd = 30
+enable_rate_limit  = false

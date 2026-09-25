@@ -75,3 +75,48 @@ each other.
 Model IDs, list prices, simulator profiles, the eval suite and each route's capabilities are all in
 `catalog.py`. Prices are defaults: override the selected model's price in the UI under **Assumptions**, or
 edit the catalog to match your contracts and the latest model versions.
+
+## Deploy to AWS (Terraform)
+
+`infra/aws/` creates everything needed to run the app on AWS App Runner:
+
+| Resource | Purpose |
+|---|---|
+| ECR repository | Holds the Docker image. Terraform builds and pushes it from your machine. |
+| Secrets Manager: one secret per key | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `XAI_API_KEY`, `GEMINI_API_KEY`, `TYPESAFE_API_KEY`, and optional `REDIS_URL`, injected as environment variables. |
+| IAM roles | One lets App Runner pull the image. The other lets the running app read only these secrets. |
+| App Runner service | Public HTTPS URL, one instance (0.5 vCPU / 1 GB by default), with health checks and logs in CloudWatch. |
+| Optional: WAF rate limit | Per-IP request limit (`enable_rate_limit = true`). Recommended because the page has no login. |
+| Optional: AWS Budget | Emails you at 80% forecast and 100% actual of a monthly limit (`budget_email`). |
+
+**You need:** Terraform 1.5 or later, the AWS CLI logged in to your account, and Docker running. On Apple
+Silicon the image is built for `linux/amd64` automatically.
+
+```bash
+cd infra/aws
+cp terraform.tfvars.example terraform.tfvars   # optional: region, size, budget email, rate limit
+terraform init
+terraform apply
+```
+
+**Add your API keys.** Terraform creates each secret with the placeholder `NOT_SET`, so your keys never
+land in Terraform state. The app treats `NOT_SET` as "no key" and simulates that provider. Store the keys
+you have, then redeploy so App Runner picks them up:
+
+```bash
+aws secretsmanager put-secret-value --secret-id agentroutecomparison/ANTHROPIC_API_KEY --secret-string 'sk-ant-...'
+aws apprunner start-deployment --service-arn <from the next_steps output>
+```
+
+**Updating the app:** run `terraform apply` again. The image tag is a hash of the app's source files, so a
+new image is built and deployed only when the code has changed.
+
+**Removing everything:** `terraform destroy`. It deletes the secrets immediately and the ECR images too.
+
+Notes:
+- The app runs as a single instance on purpose. Its caches and the Jev router's similarity index live in
+  memory, so extra instances would each have their own copy.
+- App Runner cuts off requests after 120 seconds. The Ask page and simulated benchmarks finish well within
+  that. A live benchmark on a slow model can exceed it, so set **Traffic repeats** to 1× for live runs.
+- Approximate cost: about $5–25/month for App Runner, $2.40/month for the six secrets, plus about $6–10/month
+  if the WAF rate limit is on. LLM API usage is billed separately by each provider.

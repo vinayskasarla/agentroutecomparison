@@ -15,6 +15,12 @@ import httpx
 
 from catalog import JEV, MODEL_BY_ID, PROVIDERS, SIM_PROFILE, SIM_RIGHT, SIM_WRONG, SUITE
 
+# Secrets created by the Terraform setup start as this placeholder until you store a real value.
+# Treat them as unset so that provider runs in simulated mode instead of failing auth.
+PLACEHOLDER = "NOT_SET"
+for _name in [k for k, v in os.environ.items() if v.strip() == PLACEHOLDER]:
+    del os.environ[_name]
+
 SYSTEM = (
     "Answer the user's question. Respond with ONLY a JSON object: "
     '{"answer": "<your answer: just the final value for a quiz question, a few sentences otherwise>", '
