@@ -10,12 +10,19 @@ KNOWLEDGE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "knowle
 # Models and prices live in knowledge/models.json so they can be reviewed and dated in one place.
 MODEL_KNOWLEDGE = json.load(open(os.path.join(KNOWLEDGE_DIR, "models.json")))
 MODELS = MODEL_KNOWLEDGE["models"]
+# 'reported' rows (from third-party trackers) have unconfirmed API IDs, so they are priced but never called.
+CALLABLE = [m for m in MODELS if m.get("callable", True)]
 
 PROVIDERS = {
     "openai": {"label": "OpenAI GPT", "env": "OPENAI_API_KEY", "small": "gpt-5-mini", "fallback": "claude-sonnet-5"},
     "anthropic": {"label": "Anthropic Claude", "env": "ANTHROPIC_API_KEY", "small": "claude-haiku-4-5", "fallback": "gpt-5"},
     "xai": {"label": "xAI Grok", "env": "XAI_API_KEY", "small": "grok-4-fast", "fallback": "gemini-2.5-pro"},
     "google": {"label": "Google Gemini", "env": "GEMINI_API_KEY", "small": "gemini-2.5-flash", "fallback": "claude-sonnet-5"},
+    "bedrock": {"label": "Amazon Bedrock", "env": "AWS credentials (IAM role)", "small": "bedrock-nova-2-lite", "fallback": "claude-haiku-4-5"},
+    "azure": {"label": "Azure AI Foundry", "env": "AZURE_OPENAI_ENDPOINT/AZURE_OPENAI_API_KEY or AZURE_FOUNDRY_RESOURCE/AZURE_FOUNDRY_API_KEY",
+              "small": "azure-gpt-5-mini", "fallback": "claude-haiku-4-5"},
+    "vertex": {"label": "Google Vertex AI", "env": "GOOGLE_CLOUD_PROJECT (Claude on Vertex)", "small": "vertex-gemini-2.5-flash",
+               "fallback": "claude-haiku-4-5"},
 }
 
 MODEL_BY_ID = {m["id"]: m for m in MODELS}
@@ -34,6 +41,25 @@ SIM_PROFILE = {
     "gemini-2.5-pro": {"ttft": 1000, "tps": 95, "skill": {1: 0.99, 2: 0.95, 3: 0.91}},
     "gemini-2.5-flash": {"ttft": 380, "tps": 200, "skill": {1: 0.97, 2: 0.87, 3: 0.73}},
 }
+
+# Simulator defaults by tier, for models without their own profile.
+TIER_SIM = {
+    "small": {"ttft": 420, "tps": 160, "skill": {1: 0.96, 2: 0.85, 3: 0.70}},
+    "medium": {"ttft": 600, "tps": 110, "skill": {1: 0.98, 2: 0.91, 3: 0.83}},
+    "large": {"ttft": 900, "tps": 85, "skill": {1: 0.99, 2: 0.95, 3: 0.90}},
+    "frontier": {"ttft": 1400, "tps": 60, "skill": {1: 0.995, 2: 0.98, 3: 0.95}},
+}
+
+
+def base_model(model_id):
+    """The underlying model: the same model on another cloud gives the same answers."""
+    return MODEL_BY_ID[model_id].get("base", model_id)
+
+
+def sim_profile(model_id):
+    base = base_model(model_id)
+    return SIM_PROFILE.get(base) or TIER_SIM[MODEL_BY_ID[model_id]["tier"]]
+
 
 # Eval suite: short questions with known answers so accuracy can be graded
 # automatically. Two items are near-duplicates on purpose — they show when a

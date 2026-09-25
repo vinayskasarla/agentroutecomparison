@@ -103,33 +103,52 @@ edit the catalog to match your contracts and the latest model versions.
 ## Keeping the advice trustworthy
 
 The advisor is meant to be a single source of truth, so what it knows is kept in reviewed, dated files. The
-decision itself is made by rules plus measurements, never written by an LLM.
+recommendation comes from rules plus measurements; no LLM writes it.
 
-- **`knowledge/models.json`:** every model with its list price, `status` (`verified` or `needs_review`), a
-  `verified_on` date and the official pricing `source`. The header pill shows how many prices are verified.
-  - A price counts as stale after `review_every_days` (60).
-  - Primary and fallback picks prefer models with verified prices, and cards flag any unverified price.
-  - A `watchlist` holds newer models reported by pricing trackers until their API IDs and prices are
-    confirmed.
-- **`knowledge/patterns.json`:** the architecture patterns, the conditions each fits, components (e.g. the
-  vector index for RAG) and design principles, each tied to a published source:
-  - [Anthropic, Building effective agents](https://www.anthropic.com/engineering/building-effective-agents)
-  - [OpenAI, A practical guide to building agents](https://cdn.openai.com/business-guides-and-resources/a-practical-guide-to-building-agents.pdf)
-  - [AWS Well-Architected Generative AI Lens](https://docs.aws.amazon.com/wellarchitected/latest/generative-ai-lens/generative-ai-lens.html)
-  - [AWS Well-Architected Agentic AI Lens](https://docs.aws.amazon.com/wellarchitected/latest/agentic-ai-lens/agentic-ai-lens.html)
-- **Live model check:** "Check models against provider APIs" in the knowledge panel, or
-  `POST /api/knowledge/check`. It lists each provider's models using your keys, and reports catalog IDs that
-  were retired or renamed, plus new model IDs not yet in the catalog.
-- **Cross-check:** when Claude reads the goal, its reading is compared with the keyword rules. Any
-  disagreement (task type, documents, actions, latency, personal data, labels) is shown for the user to
-  confirm before relying on the result.
+**What the dashboard says for a goal**
+1. **The answer**, in one sentence: the best model, the architecture, the monthly cost, the accuracy, and
+   how fast 95% of answers arrive; plus the fallback model and what it costs.
+2. **Best model and fallback cards:** per month, accuracy, hallucinations, 95% latency, and cost per 1,000
+   correct answers (the efficiency figure).
+   - **Fallback** is the cheapest qualifying model on a *different platform*, from a different maker where
+     possible, so one outage can't take both down.
+3. **Top 3 architectures for this goal**, each with its own best model, why #1 wins, and the trade-offs of
+   #2 and #3. If fewer than three patterns fit, it says so rather than padding the list.
+4. **Every model for this goal, priced inside architecture 1, cheapest first:** about 38 offerings across the
+   Anthropic API, OpenAI API, Gemini API, xAI API, Amazon Bedrock, Azure AI Foundry and Google Vertex AI.
+   - Each row shows price status, whether it was measured live or simulated (or estimated for "reported"
+     models), accuracy, hallucinations, latency, cost per 1K correct answers, monthly cost, and the result.
+   - The best-model row always matches the headline.
 
-**Review routine (about 30 minutes a month).** An owner should:
-1. Run the live check.
-2. Confirm prices on each provider's official page, then update `models.json` (price, `status`,
-   `verified_on`).
-3. Move confirmed watchlist models into the catalog, adding a simulator profile in `catalog.py`.
-4. Revisit `patterns.json` each quarter.
+**Prices** (`knowledge/models.json`)
+- **Verified automatically on every start** (`pricing_sync.py`, or "Sync prices now"):
+  - Anthropic, from its official pricing page. This also covers Claude on Azure AI Foundry, which Anthropic
+    bills at standard rates.
+  - Amazon Bedrock, from the public AWS Price List API.
+  - Azure OpenAI, from the public Azure Retail Prices API.
+- **Needs owner review:** OpenAI, Google and xAI publish no machine-readable price list, and Claude on
+  Bedrock and Vertex is billed through the marketplaces. Confirm these on the providers' pricing pages and
+  set `status`/`verified_on`.
+- **Reported:** newer models seen on third-party trackers. Their API IDs aren't confirmed, so they're priced
+  as an estimate but never called.
+- **Selection rule:** best-model and fallback picks prefer verified prices. If a cheaper unverified model
+  qualified, the dashboard says so.
+
+**Live calls**
+- Anthropic, OpenAI, Gemini and xAI use API keys.
+- Bedrock uses the AWS credentials or IAM role: Claude through the Anthropic SDK's Bedrock client, other
+  models through Converse, with model IDs resolved by name.
+- Azure uses `AZURE_OPENAI_ENDPOINT`/`AZURE_OPENAI_API_KEY` for GPT models, and
+  `AZURE_FOUNDRY_RESOURCE`/`AZURE_FOUNDRY_API_KEY` for Claude.
+- Vertex uses `GOOGLE_CLOUD_PROJECT` for Claude.
+
+Anything unreachable is simulated and labelled. When live results qualify, the best model and fallback are
+picked from those.
+
+**Patterns** (`knowledge/patterns.json`): 12 patterns with the conditions each fits, components and design
+principles, each tied to a published source (Anthropic, OpenAI, AWS Well-Architected Generative AI and
+Agentic AI lenses). The cross-check flags any disagreement between Claude's reading of the goal and the
+keyword rules, for the user to confirm.
 
 ## Audit trail (CloudWatch)
 

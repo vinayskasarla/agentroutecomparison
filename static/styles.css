@@ -275,3 +275,44 @@ td.missed { color: var(--bad); font-weight: 600; }
 .details details:first-child { border-top: 0; padding-top: 0; }
 .details summary { cursor: pointer; font-weight: 600; }
 @media (max-width: 860px) { .kpis4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .dname { font-size: 24px; } }
+
+/* ---------- Advisor v4: statement · picks · architectures · every model */
+.kexplain { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 12px 0 6px; font-size: 13px; color: var(--ink-2); }
+.kexplain > div { background: var(--surface-2); border-radius: 10px; padding: 10px 12px; }
+.statement { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.statement .goalline { margin: 4px 0 8px; color: var(--ink-2); font-size: 14px; }
+.statement .answer { font-size: 20px; line-height: 1.5; margin: 0 0 10px; letter-spacing: -0.01em; }
+.statement .answer b { font-weight: 750; }
+.stmeta { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.picks { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, 1fr); gap: 14px; margin-bottom: 8px; }
+.pick { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px; min-width: 0; }
+.pick.first { border-color: var(--accent); }
+.pick > .k, .archhead .k { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; font-weight: 800; color: var(--accent); }
+.pname { font-size: 22px; font-weight: 800; letter-spacing: -0.01em; margin: 6px 0 2px; }
+.pick .what { color: var(--ink-2); font-size: 13px; margin: 4px 0 8px; }
+.ms5 { grid-template-columns: repeat(5, minmax(0, 1fr)); margin-top: 12px; }
+.ms5 .m .v { font-size: 16px; }
+.cheaper { grid-column: 1 / -1; margin: 2px 4px 0; }
+.modebadge { font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 4px; white-space: nowrap; }
+.modebadge.live { background: var(--good-bg); color: var(--good); }
+.modebadge.simulated { background: var(--surface-2); color: var(--ink-2); border: 1px solid var(--border); }
+.modebadge.estimate { background: transparent; color: var(--muted); border: 1px dashed var(--axis); }
+.arch h3 { font-size: 18px; }
+.arch .pick-if { margin: 8px 0 0; color: var(--ink-2); font-size: 13px; }
+.tfilters { display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
+.tfilters .seg { flex-wrap: wrap; }
+.tfilters .seg button { padding: 4px 10px; font-size: 12.5px; }
+.mtable td { vertical-align: top; }
+.mtable tr.rowp td { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.mtable tr.rowf td { background: color-mix(in srgb, var(--s2) 9%, transparent); }
+.mtable tr.rowr td { color: var(--ink-2); }
+.costcell { position: relative; min-width: 150px; }
+.costcell .cbar { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); height: 18px; background: color-mix(in srgb, var(--accent) 22%, transparent); border-radius: 3px; max-width: calc(100% - 20px); }
+.costcell b { position: relative; }
+.tagp, .tagf { font-size: 11.5px; font-weight: 800; padding: 2px 8px; border-radius: 999px; color: #fff; white-space: nowrap; }
+.tagp { background: var(--accent); } .tagf { background: var(--s2); }
+@media (max-width: 1000px) { .picks { grid-template-columns: minmax(0, 1fr); } .kexplain { grid-template-columns: minmax(0, 1fr); } .ms5 { grid-template-columns: repeat(3, minmax(0, 1fr)); } .tfilters { align-items: flex-start; } }
+.statement .verdict-text { font-size: 20px; line-height: 1.5; margin: 0 0 10px; letter-spacing: -0.01em; }
+.statement .verdict-text b { font-weight: 750; }
+.picks .ms5 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.mtable th, .mtable td { padding: 7px 8px; }

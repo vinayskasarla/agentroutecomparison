@@ -11,36 +11,36 @@
   <header>
     <div>
       <h1>Architecture Advisor</h1>
-      <p class="sub">Describe your agent. Get the architecture, model, fallback and monthly cost — tested on your use case.</p>
+      <p class="sub">Describe your agent. Get the best model, its fallback, the top 3 architectures and what every model would cost — tested on your use case.</p>
       <nav class="tabs"><a href="/" class="on">Architecture advisor</a><a href="/ask">Ask a question</a><a href="/benchmark">Benchmark</a></nav>
     </div>
     <div class="hdr-right">
-      <button class="kpill" id="kpill" title="What the advice is based on"></button>
+      <button class="kpill" id="kpill" title="Where prices and patterns come from"></button>
       <button class="ghost" id="theme" title="Toggle light / dark">◐</button>
     </div>
   </header>
 
   <!-- knowledge panel -->
   <section class="card hidden" id="kpanel">
-    <div class="cardhead"><div><h2>What the advice is based on</h2><p class="hint" id="kmeta" style="margin:0"></p></div>
+    <div class="cardhead"><div><h2>Where the advice comes from</h2><p class="hint" id="kmeta" style="margin:0"></p></div>
       <button class="ghost" id="kclose">Close</button></div>
-    <div class="two" style="margin-top:12px">
-      <div>
-        <h3 class="h3">Models and prices</h3>
-        <div class="tablewrap"><table id="ktable"></table></div>
-        <button class="ghost" id="kcheck" style="margin-top:8px">Check models against provider APIs</button>
-        <div id="kcheckOut" class="hint" style="margin-top:6px"></div>
-      </div>
+    <div class="kexplain">
+      <div><b class="yes">✓ Verified automatically</b><br>Anthropic (official pricing page), Amazon Bedrock (AWS Price List API) and Azure (Azure Retail Prices API) — re-synced every time the app starts.</div>
+      <div><b class="warn">⚠ Needs owner review</b><br>OpenAI, Google and xAI don't publish a machine-readable price list, so a person confirms their prices on the pricing page.</div>
+      <div><b>Reported</b><br>Newer models seen on third-party pricing trackers. Their API names aren't confirmed, so they're priced as an estimate but not tested.</div>
+    </div>
+    <div class="runrow" style="margin:6px 0 10px"><button class="ghost" id="ksync">Sync prices now</button><button class="ghost" id="kcheck">Check model lists against provider APIs</button><span class="hint" id="kout"></span></div>
+    <div class="two">
+      <div><div class="tablewrap" style="max-height:340px;overflow:auto"><table id="ktable"></table></div></div>
       <div>
         <h3 class="h3">Best-practice sources</h3><ul class="facts" id="ksources"></ul>
         <h3 class="h3" style="margin-top:12px">Design principles</h3><ul class="facts" id="kprinciples"></ul>
-        <h3 class="h3" style="margin-top:12px">Market watch <span class="hint">(reported, not yet in the catalog)</span></h3><ul class="facts" id="kwatch"></ul>
       </div>
     </div>
   </section>
 
   <section class="card goalcard">
-    <textarea id="goal" class="askbox" placeholder="e.g. Route every support ticket to billing, technical, account or sales. About 50k a day, in real time."></textarea>
+    <textarea id="goal" class="askbox" placeholder="What should your agent do? e.g. Route every support ticket to billing, technical, account or sales. About 50k a day, in real time."></textarea>
     <div class="examples" id="examples"></div>
     <div class="runrow">
       <button class="primary" id="go">Get architecture advice</button>
@@ -55,36 +55,27 @@
   <section id="results" class="hidden">
     <div class="confirm hidden" id="confirm"></div>
 
-    <!-- Decision strip -->
-    <section class="card decision">
-      <div class="dtop">
-        <div class="dmain">
-          <div class="eyebrow">Build this</div>
-          <div class="dname" id="dname"></div>
-          <div class="chain" id="dflow"></div>
-        </div>
-        <div class="dmodels" id="dmodels"></div>
-      </div>
-      <div class="kpis4" id="dkpis"></div>
-      <div class="dnote" id="dnote"></div>
-    </section>
+    <!-- 1. The answer -->
+    <section class="card statement" id="statement"></section>
 
-    <!-- Compare + models -->
-    <div class="two">
-      <section class="card chart">
-        <h2>Top 3 compared</h2>
-        <p class="hint" style="margin:0 0 6px">Longer bar is better. Hover a bar for the exact value.</p>
-        <div id="compare"></div>
-      </section>
-      <section class="card chart">
-        <h2>Models on your test cases</h2>
-        <p class="hint" style="margin:0 0 6px" id="mhint"></p>
-        <div id="mchart"></div>
-      </section>
-    </div>
+    <!-- 2. Best model · Fallback · Architecture -->
+    <div class="picks" id="picks"></div>
 
-    <!-- Option cards -->
+    <!-- 3. Top 3 architectures -->
+    <h2 class="sectiontitle" id="archTitle">Top 3 architectures for this agent</h2>
     <div class="top3" id="top3"></div>
+
+    <!-- 4. Every model -->
+    <section class="card">
+      <div class="cardhead">
+        <div><h2 id="tableTitle">Every model for this agent</h2><p class="hint" id="tableHint" style="margin:0"></p></div>
+        <div class="tfilters">
+          <div class="seg" id="platformSeg"></div>
+          <label class="check" style="margin:0"><input type="checkbox" id="onlyMeets"> <span>Only models that meet every requirement</span></label>
+        </div>
+      </div>
+      <div class="tablewrap"><table id="mtable" class="mtable"></table></div>
+    </section>
 
     <!-- Details -->
     <section class="card details">
@@ -117,17 +108,18 @@
           <div class="runrow"><button class="primary" id="rerun">Re-run</button></div>
         </div>
       </details>
-      <details data-d="build"><summary>How to build #1</summary><div id="build" style="margin-top:10px"></div></details>
-      <details data-d="ruled"><summary>Ruled out for this task</summary><ul class="facts" id="ruled" style="margin-top:10px"></ul></details>
-      <details data-d="cases"><summary>Test cases and answers</summary><div class="tablewrap" style="margin-top:10px"><table class="drill" id="cases"></table></div></details>
+      <details data-d="build"><summary>How to build architecture 1</summary><div id="build" style="margin-top:10px"></div></details>
+      <details data-d="ruled"><summary>Architectures ruled out for this task</summary><ul class="facts" id="ruled" style="margin-top:10px"></ul></details>
+      <details data-d="cases"><summary>Test cases and each model's answers</summary><div class="tablewrap" style="margin-top:10px"><table class="drill" id="cases"></table></div></details>
       <details data-d="method"><summary>How this advice is made</summary>
         <ol class="steps-ol" style="margin-top:10px">
-          <li><b>Understand:</b> Claude (or built-in rules without a key) reads the goal and writes test cases. You can check and edit both; disagreements with the rules are flagged for you to confirm.</li>
-          <li><b>Measure:</b> every model answers every test case. Accuracy, hallucinations, latency and tokens come from those runs.</li>
-          <li><b>Match patterns:</b> only architectures whose published best-practice conditions fit the task are considered; the rest are listed with the reason.</li>
-          <li><b>Rank:</b> designs that meet every requirement first, then accuracy 35%, cost 25%, speed 15% (0% for background jobs), simplicity 25%. No LLM writes the recommendation.</li>
+          <li><b>Understand:</b> Claude (or built-in rules without a key) reads the goal and writes test cases. You can check and edit both; disagreements with the rules are flagged.</li>
+          <li><b>Measure:</b> every model answers every test case — live where this server has access, simulated elsewhere (each row says which).</li>
+          <li><b>Match patterns:</b> only architectures whose published best-practice conditions fit the task are considered.</li>
+          <li><b>Rank architectures:</b> designs meeting every requirement first, then accuracy 35%, cost 25%, speed 15% (0% for background jobs), simplicity 25%.</li>
+          <li><b>Pick models:</b> every model is priced inside architecture 1. Best model = cheapest one that meets every requirement, preferring verified prices. Fallback = cheapest qualifying model on a different platform (and maker where possible), so one outage can't take both down.</li>
         </ol>
-        <p class="hint">Evidence labels: <span class="ev m">measured</span> directly on your cases · <span class="ev c">from measurements</span> replayed per case (e.g. which answers a cascade would escalate) · <span class="ev p">estimated</span> for steps that need your systems (tools, retrieval, multi-agent turns).</p>
+        <p class="hint">No LLM writes the recommendation. <b>Cost per 1,000 correct answers</b> = cost per request ÷ accuracy × 1,000: the efficiency figure to compare models.</p>
       </details>
       <div class="runrow" style="margin-top:6px"><button class="ghost" id="adr">⬇ Download decision record</button></div>
     </section>
@@ -155,7 +147,7 @@ const SERIES = ["var(--s1)", "var(--s2)", "var(--s3)"];
 const BUILD = {
   single_call: ["One prompt with clear instructions and JSON-schema structured output.", "Call it through the AI Gateway with the fallback model configured.", "Keep these test cases as a regression suite."],
   cascade: ["Small model first; ask for a confidence score with the answer.", "Below 80% confidence, re-ask the large model; log both.", "Tune the threshold on your test cases."],
-  decision_model: ["Define the decision as a Jev choice question with your labels.", "Accept Jev at ≥ 0.8 confidence; send the rest to the LLM.", "Review escalations weekly to refine labels and threshold."],
+  decision_model: ["Define the decision as a Jev choice question with your labels.", "Accept Jev's answer at ≥ 80% confidence; send the rest to the LLM.", "Review escalations weekly to refine labels and threshold."],
   long_context: ["Put the documents in the system prompt with prompt caching.", "Instruct: answer only from them, else \"unknown\".", "Move to RAG when documents outgrow ~100 pages or change often."],
   rag: ["Chunk, embed and index documents (OpenSearch Serverless or Aurora pgvector).", "Hybrid keyword + vector search with reranking; cite passages.", "Answer only from retrieved text, else \"unknown\"; measure retrieval separately."],
   workflow: ["Code the steps: classify → run the matching tested handler → check.", "Small model for routing/extraction, main model for decisions and drafts.", "Human approval before irreversible actions; trace every step."],
@@ -164,7 +156,7 @@ const BUILD = {
   multi_agent: ["Lead model plans and splits the work.", "Workers run in parallel on the small model with search tools.", "Lead merges and cites; cap steps and spend per run."],
   batch: ["Queue requests; submit via the providers' batch APIs (~50% off).", "Store results in S3; retry failures next batch.", "Keep an on-demand path for urgent requests."],
 };
-let CFG, KNOW, ADV = null, SPEC = null, SRC = null;
+let CFG, KNOW, ADV = null, SPEC = null, SRC = null, PLATFORM = "All";
 
 // ---------------------------------------------------------------- setup
 $("#examples").innerHTML = EXAMPLES.map(([t, g]) => `<button class="ex" type="button" data-goal="${esc(g)}">${esc(t)}</button>`).join("");
@@ -179,34 +171,44 @@ $("#adr").onclick = downloadADR;
 $("#kpill").onclick = () => { $("#kpanel").classList.toggle("hidden"); track("knowledge_opened", {}); };
 $("#kclose").onclick = () => $("#kpanel").classList.add("hidden");
 $("#kcheck").onclick = liveCheck;
+$("#ksync").onclick = syncPrices;
+$("#onlyMeets").onchange = renderTable;
 document.querySelectorAll("details[data-d]").forEach((d) => d.addEventListener("toggle", () => d.open && track("details_opened", { section: d.dataset.d })));
-
 function track(event, data) { fetch("/api/events", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ event, data }) }).catch(() => {}); }
 
-Promise.all([fetch("/api/config").then((r) => r.json()), fetch("/api/knowledge").then((r) => r.json())]).then(([cfg, k]) => {
-  CFG = cfg; KNOW = k; renderKnowledge();
-});
-function modelLabel(id) { const m = CFG.models.find((x) => x.id === id); return m ? m.label : id; }
-function modelInfo(id) { return KNOW.models.find((x) => x.id === id) || {}; }
+function loadKnowledge() { return fetch("/api/knowledge").then((r) => r.json()).then((k) => { KNOW = k; renderKnowledge(); }); }
+fetch("/api/config").then((r) => r.json()).then((cfg) => { CFG = cfg; return loadKnowledge(); });
+function info(id) { return (KNOW && KNOW.models.find((x) => x.id === id)) || {}; }
+function mlabel(id) { const m = info(id); return m.label ? m.label : id; }
+function mplat(id) { return info(id).platform || ""; }
 
+// ---------------------------------------------------------------- knowledge
+function statusBadge(m) {
+  if (m.status === "verified") return `<span class="yes" data-tip="${esc(m.price_source || "Checked against " + (m.source || "the official source"))}">✓ verified${m.verified_on ? " " + esc(m.verified_on) : ""}</span>`;
+  if (m.status === "reported") return `<span class="hint" data-tip="${esc(m.review_note || "")}">reported</span>`;
+  return `<span class="warn" data-tip="${esc(m.review_note || "Confirm on the provider's pricing page")}">⚠ needs review</span>`;
+}
 function renderKnowledge() {
-  const k = KNOW, stale = k.models_total - k.models_verified;
-  $("#kpill").innerHTML = `<i class="dot" style="background:${stale || k.patterns_stale ? "var(--s4)" : "var(--good)"}"></i>Knowledge · ${k.models_verified}/${k.models_total} model prices verified`;
-  $("#kmeta").textContent = `Patterns reviewed ${k.patterns_reviewed_on}${k.patterns_stale ? " (due for review)" : ""}. Model prices are re-verified every ${k.model_review_every_days} days.`;
-  $("#ktable").innerHTML = `<thead><tr><th>Model</th><th class="num">$ in / out per 1M</th><th>Status</th></tr></thead><tbody>` +
-    k.models.map((m) => `<tr><td>${esc(m.label)}<div class="hint">${esc(m.id)}</div></td><td class="num">$${m.in} / $${m.out}</td>
-      <td>${m.status === "verified" && (m.age_days ?? 999) <= k.model_review_every_days ? `<span class="yes">✓ verified ${esc(m.verified_on)}</span>` : `<span class="warn">needs review</span>`}
-      <a class="hint" href="${esc(m.source)}" target="_blank" rel="noopener">source</a>${m.review_note ? `<div class="hint">${esc(m.review_note)}</div>` : ""}</td></tr>`).join("") + "</tbody>";
+  const k = KNOW;
+  $("#kpill").innerHTML = `<i class="dot" style="background:${k.models_verified < k.models_total - k.models_reported ? "var(--s4)" : "var(--good)"}"></i>Prices: ${k.models_verified} verified · ${k.models_total - k.models_verified - k.models_reported} to review · ${k.models_reported} reported`;
+  const sync = k.last_price_sync;
+  $("#kmeta").textContent = `Patterns reviewed ${k.patterns_reviewed_on}. ` + (sync ? `Last price sync ${sync.at.replace("T", " ").slice(0, 16)} UTC: ` +
+    Object.entries(sync.sources).map(([s, v]) => `${s} ${v.ok ? "✓ " + v.models_matched + " matched" : "unreachable"}`).join(" · ") : "Price sync hasn't run yet.");
+  $("#ktable").innerHTML = `<thead><tr><th>Model</th><th>Platform</th><th class="num">$ / 1M in · out</th><th>Price</th></tr></thead><tbody>` +
+    k.models.map((m) => `<tr><td>${esc(m.label)}</td><td class="hint">${esc(m.platform)}</td><td class="num">$${m.in} · $${m.out}</td><td>${statusBadge(m)} <a class="hint" href="${esc(m.source)}" target="_blank" rel="noopener">source</a></td></tr>`).join("") + "</tbody>";
   $("#ksources").innerHTML = Object.values(k.sources).map((s) => `<li><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title)}</a></li>`).join("");
   $("#kprinciples").innerHTML = k.principles.map((p) => `<li>${esc(p)}</li>`).join("");
-  $("#kwatch").innerHTML = k.watchlist.map((w) => `<li><b>${esc(w.name)}</b> ${esc(w.reported_price)} <a class="hint" href="${esc(w.source)}" target="_blank" rel="noopener">seen ${esc(w.seen_on)}</a></li>`).join("");
+}
+async function syncPrices() {
+  $("#kout").textContent = "Syncing…";
+  const r = await fetch("/api/knowledge/sync-prices", { method: "POST" }).then((x) => x.json());
+  $("#kout").textContent = Object.entries(r.sources).map(([s, v]) => `${s}: ${v.ok ? v.models_matched + " matched" : "unreachable"}`).join(" · ") + (r.changes.length ? ` · ${r.changes.length} price changes` : " · no price changes");
+  loadKnowledge();
 }
 async function liveCheck() {
-  $("#kcheckOut").textContent = "Checking…";
+  $("#kout").textContent = "Checking…";
   const r = await fetch("/api/knowledge/check", { method: "POST" }).then((x) => x.json());
-  $("#kcheckOut").innerHTML = Object.entries(r).map(([p, v]) => `<div><b>${esc(CFG.providers[p].label)}:</b> ${v.checked
-    ? `${v.missing.length ? `<span class="no">retired or renamed: ${esc(v.missing.join(", "))}</span>` : "all catalog models available"}${v.new.length ? ` · <span class="warn">not in catalog: ${esc(v.new.slice(0, 12).join(", "))}</span>` : ""}`
-    : esc(v.reason)}</div>`).join("");
+  $("#kout").innerHTML = Object.entries(r).map(([p, v]) => `${esc(CFG.providers[p].label)}: ${v.checked ? (v.missing.length ? `<span class="no">missing ${esc(v.missing.join(", "))}</span>` : "✓") + (v.new.length ? ` <span class="warn">new: ${esc(v.new.slice(0, 8).join(", "))}</span>` : "") : "skipped"}`).join(" · ");
 }
 
 // ---------------------------------------------------------------- run
@@ -233,6 +235,7 @@ async function advise(body) {
       }
     }
     document.querySelectorAll("#stepper li").forEach((li) => (li.className = "done"));
+    await loadKnowledge();
     render();
     $("#results").scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (e) { alert("Advice failed: " + e.message); }
@@ -241,115 +244,121 @@ async function advise(body) {
 
 // ---------------------------------------------------------------- render
 const pct = (x) => x == null ? "—" : Math.round(x * 100) + "%";
-const dur = (ms) => ms >= 3600000 ? Math.round(ms / 3600000) + " h" : ms >= 60000 ? Math.round(ms / 60000) + " min" : fmtMs(ms);
+const dur = (ms) => ms == null ? "—" : ms >= 3600000 ? Math.round(ms / 3600000) + " h" : ms >= 60000 ? Math.round(ms / 60000) + " min" : fmtMs(ms);
 function strength() {
-  const n = ADV.top[0] ? ADV.top[0].n : 0;
-  if (ADV.simulated) return ["Indicative", "weak", "Simulated model calls. Add API keys for real evidence."];
-  if (n >= 40) return ["Strong", "strong", `${n} graded test cases.`];
+  const n = ADV.top[0] ? ADV.top[0].n : 0, live = ADV.live_count;
+  if (!live) return ["Indicative", "weak", "Model calls were simulated. Add API access for real measurements."];
+  if (n >= 40) return ["Strong", "strong", `${n} graded test cases, live calls.`];
   if (n >= 15) return ["Moderate", "moderate", `${n} graded test cases; 40+ makes close calls decisive.`];
   return ["Weak", "weak", `Only ${n} graded test cases.`];
 }
+function row(id) { return ADV.model_table.find((r) => r.id === id); }
+function modelName(id) { return id === "jev" ? "Jev" : `${mlabel(id)}${mplat(id) && !mplat(id).startsWith(info(id).maker) ? " on " + mplat(id) : ""}`; }
 
 function render() {
   $("#results").classList.remove("hidden");
-  const d = ADV.top[0], st = strength();
-  // confirm flags
   const conf = SRC.confirm || [];
   $("#confirm").classList.toggle("hidden", !conf.length);
   $("#confirm").innerHTML = conf.length ? `<b>Please confirm:</b> ${conf.map((c) => `${esc(c.label)} read as <b>${esc(String(c.architect))}</b> (rules suggest ${esc(String(c.rules))})`).join(" · ")}. <a href="#" id="fixit">Adjust</a>` : "";
   if (conf.length) $("#fixit").onclick = (e) => { e.preventDefault(); document.querySelector('details[data-d="understood"]').open = true; $("#adjust").classList.remove("hidden"); };
-
-  $("#dname").textContent = d.name;
-  $("#dflow").innerHTML = d.flow.map((x) => `<span class="node ${/LLM/.test(x) ? "llm" : ""}">${esc(x)}</span>`).join('<span class="arrow">→</span>');
-  const roles = [["Primary", d.models.primary], ["Fallback", d.models.fallback !== d.models.primary ? d.models.fallback : null],
-    ["Small / light steps", ["cascade", "workflow", "multi_agent"].includes(d.arch) ? d.models.small : null]].filter(([, m]) => m);
-  if (d.arch === "decision_model") roles.unshift(["Decides first", "jev"]);
-  $("#dmodels").innerHTML = roles.map(([r, m]) => {
-    const mi = m === "jev" ? KNOW.jev : modelInfo(m);
-    return `<div class="mrole"><div class="k">${r}</div><div class="v">${esc(m === "jev" ? "Jev" : modelLabel(m))}</div>
-      <div class="hint">${m === "jev" ? `$${mi.in} per 1M input` : `$${mi.in} / $${mi.out} per 1M`} ${mi.status === "verified" ? '<span class="yes">✓</span>' : '<span class="warn" data-tip="Price not verified against the provider\'s pricing page">⚠ price unverified</span>'}</div></div>`;
-  }).join("");
-  const chk = (k) => { const c = d.checks.find((x) => x.key === k); return c ? c.pass : null; };
-  const big = (k, v, sub, pass, cls = "") => `<div class="kpi ${pass === false ? "bad" : pass ? "good" : ""} ${cls}"><div class="k">${k}</div><div class="v">${v}</div><div class="d">${sub}</div></div>`;
-  $("#dkpis").innerHTML =
-    big("Accuracy", pct(d.accuracy), d.accuracy == null ? "add expected answers to grade" : `${d.right} of ${d.n} cases · target ${pct(SPEC.accuracy_target)}`, chk("accuracy")) +
-    big("95% answered within", dur(d.p95_ms), `budget ${dur(SPEC.latency_budget_ms)}`, chk("latency")) +
-    big("Per month", fmt$(d.monthly), `${SPEC.requests_per_day.toLocaleString()} requests/day${SPEC.monthly_budget ? " · budget " + fmt$(SPEC.monthly_budget) : ""}`, chk("cost")) +
-    big("Evidence", st[0], st[2], null, "ev-" + st[1]);
-  $("#dnote").innerHTML = (d.passes ? "" : `<span class="no">Closest option — misses ${d.checks.filter((c) => !c.pass).map((c) => c.label.toLowerCase()).join(", ")}.</span> `) +
-    (d.addons.length ? `Add-ons: ${d.addons.map((a) => `<span class="badge" data-tip="${esc(a.why)}">${esc(a.name)}</span>`).join(" ")}` : "") +
-    ` <span class="ev ${EV[d.evidence][1]}" data-tip="${esc(EV[d.evidence][2])}">${EV[d.evidence][0]}</span>` +
-    (d.sources && d.sources.length ? ` <span class="hint">Best practice: ${d.sources.map((s) => `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title.split(" — ")[0])}</a>`).join(", ")}</span>` : "");
-
-  renderCompare(); renderModelsChart(); renderCards(); renderDetails();
+  renderStatement(); renderPicks(); renderArchitectures(); renderPlatforms(); renderTable(); renderDetails();
 }
 
-function renderCompare() {
-  const top = ADV.top, minCost = Math.min(...top.map((d) => d.monthly)), minLat = Math.min(...top.map((d) => d.p95_ms));
-  const metrics = [
-    ["Accuracy", (d) => d.accuracy ?? 0, (d) => pct(d.accuracy)],
-    ["Speed", (d) => minLat / Math.max(d.p95_ms, 1), (d) => dur(d.p95_ms) + " p95"],
-    ["Cost", (d) => minCost / Math.max(d.monthly, 1e-9), (d) => fmt$(d.monthly) + "/mo"],
-    ["Simplicity", (d) => (6 - d.complexity) / 5, (d) => ["", "very simple", "simple", "moderate", "complex", "very complex"][d.complexity]],
-  ];
-  const W = $("#compare").clientWidth || 520, L = 86, R = 110, barH = 10, gap = 4, groupGap = 14;
-  const H = metrics.length * (top.length * (barH + gap) + groupGap) + 30;
-  let svg = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="Top 3 compared">`, y = 6;
-  metrics.forEach(([name, val, lab]) => {
-    svg += `<text class="lbl" x="0" y="${y + (top.length * (barH + gap)) / 2 + 3}">${name}</text>`;
-    top.forEach((d, i) => {
-      const v = Math.max(0.02, Math.min(1, val(d))), w = (W - L - R) * v;
-      svg += `<rect x="${L}" y="${y}" width="${W - L - R}" height="${barH}" rx="3" fill="var(--surface-2)"/>`;
-      svg += `<rect x="${L}" y="${y}" width="${w}" height="${barH}" rx="3" fill="${SERIES[i]}" data-tip="#${i + 1} ${esc(d.name)}: ${esc(lab(d))}"/>`;
-      svg += `<text class="val" x="${L + (W - L - R) + 8}" y="${y + barH - 1}">${esc(lab(d))}</text>`;
-      y += barH + gap;
-    });
-    y += groupGap;
-  });
-  svg += "</svg>";
-  $("#compare").innerHTML = svg + `<div class="legend">${top.map((d, i) => `<span><i style="background:${SERIES[i]}"></i>#${i + 1} ${esc(d.name)}</span>`).join("")}</div>`;
+function renderStatement() {
+  const d = ADV.top[0], p = ADV.models, pr = row(p.primary), fb = p.fallback ? row(p.fallback) : null, st = strength();
+  $("#statement").innerHTML = `
+    <div class="eyebrow">For this agent</div>
+    <p class="goalline">“${esc(SPEC.summary)}”</p>
+    <p class="verdict-text">Use <b>${esc(modelName(p.primary))}</b> in a <b>${esc(d.name)}</b> architecture:
+      <b>${fmt$(d.monthly)}/month</b>, <b>${pct(d.accuracy)}</b> correct on ${d.n} test cases, 95% of answers within <b>${dur(d.p95_ms)}</b>.
+      ${fb ? `If it's unavailable, fall back to <b>${esc(modelName(p.fallback))}</b> (${fmt$(p.fallback_design.monthly)}/month, ${pct(p.fallback_design.accuracy)} correct).` : "No qualifying fallback on another platform was found."}</p>
+    <div class="stmeta"><span class="strength ${st[1]}">Evidence: ${st[0]}</span> <span class="hint">${esc(st[2])}</span>
+      ${d.passes ? "" : `<span class="no">Closest option — misses ${d.checks.filter((c) => !c.pass).map((c) => c.label.toLowerCase()).join(", ")}.</span>`}</div>`;
 }
 
-function renderModelsChart() {
-  const t = ADV.models.table, p = ADV.models, ids = Object.keys(t).filter((m) => t[m].accuracy != null);
-  $("#mhint").textContent = `Each model answered the same ${ADV.cases.length} cases. Dashed line: your ${pct(SPEC.accuracy_target)} target.`;
-  if (!ids.length) { $("#mchart").innerHTML = '<p class="hint">Add expected answers to the test cases to compare model accuracy.</p>'; return; }
-  const el = $("#mchart"), W = el.clientWidth || 520, H = 250, L = 40, R = 12, T = 10, B = 30;
-  const xs = ids.map((m) => Math.max(t[m].cost_per_req * 1000, 1e-4)), lo = Math.log10(Math.min(...xs) / 1.8), hi = Math.log10(Math.max(...xs) * 1.8);
-  const X = (v) => L + (Math.log10(Math.max(v, 1e-4)) - lo) / (hi - lo) * (W - L - R);
-  const ymin = Math.max(0, Math.min(SPEC.accuracy_target, ...ids.map((m) => t[m].accuracy)) - 0.1), Y = (v) => T + (1 - (v - ymin) / (1 - ymin)) * (H - T - B);
-  let svg = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="Model accuracy versus cost">`;
-  [0, 0.5, 1].map((f) => ymin + f * (1 - ymin)).forEach((v) => (svg += `<line class="gridline" x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${L - 6}" y="${Y(v) + 4}" text-anchor="end">${Math.round(v * 100)}%</text>`));
-  for (let e = Math.ceil(lo); e <= Math.floor(hi); e++) svg += `<text x="${X(10 ** e)}" y="${H - 12}" text-anchor="middle">${fmt$(10 ** e)}</text>`;
-  svg += `<text x="${(L + W - R) / 2}" y="${H}" text-anchor="middle">cost per 1,000 requests (log scale)</text>`;
-  svg += `<line x1="${L}" x2="${W - R}" y1="${Y(SPEC.accuracy_target)}" y2="${Y(SPEC.accuracy_target)}" stroke="var(--axis)" stroke-dasharray="4 3"/>`;
-  const role = (m) => m === p.primary ? ["Primary", "var(--accent)"] : m === p.fallback ? ["Fallback", "var(--s2)"] : m === p.small ? ["Small", "var(--s3)"] : [null, "var(--surface)"];
-  const order = ids.sort((a, b) => t[a].cost_per_req - t[b].cost_per_req), placed = [];
-  order.forEach((m, i) => {
-    let x = X(t[m].cost_per_req * 1000), y = Y(t[m].accuracy);
-    while (placed.some((q) => Math.hypot(q[0] - x, q[1] - y) < 16)) y += 9;
-    placed.push([x, y]);
-    const [r, c] = role(m);
-    svg += `<g data-tip="${esc(modelLabel(m))}: ${pct(t[m].accuracy)} accurate, ${fmt$(t[m].cost_per_req * 1000)} per 1K, p95 ${fmtMs(t[m].p95_ms)}${r ? " · " + r : ""}">
-      <circle cx="${x}" cy="${y}" r="9" fill="${c}" stroke="${r ? c : "var(--ink-2)"}" stroke-width="1.5"/>
-      <text x="${x}" y="${y + 3.5}" text-anchor="middle" style="font-size:10px;font-weight:700;fill:${r ? "#fff" : "var(--ink)"}">${i + 1}</text></g>`;
-  });
-  el.innerHTML = svg + `</svg><div class="scatterkey">${order.map((m, i) => { const [r] = role(m);
-    return `<span class="${r ? "rec" : ""}"><b>${i + 1}</b> ${esc(modelLabel(m))}${r ? ` · ${r}` : ""} · ${pct(t[m].accuracy)}</span>`; }).join("")}</div>`;
+function modelCard(title, sub, id, m, isPrimary) {
+  const i = info(id), r = row(id);
+  const kv = (k, v, cls = "") => `<div class="m ${cls}"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+  const chk = (key) => { const c = m.checks && m.checks.find((x) => x.key === key); return c && !c.pass ? "bad" : ""; };
+  return `<article class="pick ${isPrimary ? "first" : ""}">
+    <div class="k">${title}</div><div class="hint">${sub}</div>
+    <div class="pname">${esc(mlabel(id))}</div>
+    <div class="hint">${esc(i.maker || "")} · ${esc(i.platform || "")} · $${i.in} / $${i.out} per 1M tokens · ${statusBadge(i)}${r && r.mode ? ` · <span class="modebadge ${r.mode}">${r.mode}</span>` : ""}</div>
+    <div class="ms ms5">
+      ${kv("Per month", fmt$(m.monthly), chk("cost"))}${kv("Accuracy", pct(m.accuracy), chk("accuracy"))}${kv("Hallucinations", pct(m.halluc), chk("halluc"))}
+      ${kv("95% within", dur(m.p95_ms), chk("latency"))}${kv("Per 1K correct", m.accuracy ? fmt$(m.cost_per_req * 1000 / m.accuracy) : "—")}
+    </div></article>`;
 }
 
-function renderCards() {
+function renderPicks() {
+  const d = ADV.top[0], p = ADV.models;
+  const cu = p.cheaper_unverified;
+  let html = modelCard("① Best model", "Cheapest model that meets every requirement in architecture 1", p.primary, d, true);
+  html += p.fallback ? modelCard("② Fallback model", "Used if the best model is down or unavailable — different platform", p.fallback, { ...p.fallback_design, checks: [] }, false)
+    : `<article class="pick"><div class="k">② Fallback model</div><p class="hint">No model on another platform met every requirement.</p></article>`;
+  html += `<article class="pick"><div class="k">③ Architecture</div><div class="hint">How the agent is put together</div>
+    <div class="pname">${esc(d.name)}</div><p class="what">${esc(d.what)}</p>
+    <div class="chain">${d.flow.map((x) => `<span class="node ${/LLM/.test(x) ? "llm" : ""}">${esc(x)}</span>`).join('<span class="arrow">→</span>')}</div>
+    <div class="addons">${d.addons.map((a) => `<span class="badge" data-tip="${esc(a.why)}">+ ${esc(a.name)}</span>`).join("")}</div></article>`;
+  $("#picks").innerHTML = html + (cu ? `<p class="cheaper hint">Cheaper option not picked: <b>${esc(cu.label)}</b> (${esc(cu.platform)}) met every requirement at ${fmt$(cu.monthly)}/month, but its price isn't verified. Confirm its price to make it eligible.</p>` : "");
+}
+
+function renderArchitectures() {
+  const n = ADV.top.length;
+  $("#archTitle").innerHTML = n >= 3 ? "Top 3 architectures for this agent"
+    : `${n === 1 ? "The architecture" : `The ${n} architectures`} that fit this agent <span class="hint" style="font-weight:400">— only ${n} of ${n + Object.keys(ADV.not_applicable).length} patterns fit this task; the rest are listed under “ruled out” with the reason</span>`;
   $("#top3").innerHTML = ADV.top.map((d, i) => {
-    const lines = i === 0 ? d.why.slice(0, 3) : d.tradeoffs;
+    const lines = i === 0 ? d.why.slice(0, 4) : d.tradeoffs;
+    const chk = (k) => { const c = d.checks.find((x) => x.key === k); return c && !c.pass ? "bad" : ""; };
     return `<article class="arch ${i === 0 ? "first" : ""}" style="--sc:${SERIES[i]}">
-      <div class="archhead"><span class="rank" style="background:${SERIES[i]};color:#fff">${i + 1}</span><b>${esc(d.name)}</b></div>
-      <div class="hint" style="margin:4px 0 8px">${esc(modelLabel(d.models.primary))} · ${pct(d.accuracy)} · ${dur(d.p95_ms)} · ${fmt$(d.monthly)}/mo
-        ${d.passes ? "" : ' · <span class="no">misses a requirement</span>'}${(d.unverified_models || []).length ? ' · <span class="warn">price unverified</span>' : ""}</div>
-      <div class="k">${i === 0 ? "Why #1" : "vs #1"}</div>
+      <div class="archhead"><span class="rank" style="background:${SERIES[i]};color:#fff">${i + 1}</span><span class="k">Architecture ${i + 1}${i === 0 ? " · recommended" : ""}</span></div>
+      <h3>${esc(d.name)}</h3>
+      <p class="what">${esc(d.what)}</p>
+      <div class="chain">${d.flow.map((x) => `<span class="node ${/LLM/.test(x) ? "llm" : ""}">${esc(x)}</span>`).join('<span class="arrow">→</span>')}</div>
+      <div class="hint" style="margin:8px 0 6px">Model: <b>${esc(modelName(d.models.primary))}</b>${["cascade", "rag_cascade", "workflow", "multi_agent"].includes(d.arch) ? ` · small: ${esc(mlabel(d.models.small))}` : ""}</div>
+      <div class="ms">
+        <div class="m ${chk("cost")}"><div class="k">Per month</div><div class="v">${fmt$(d.monthly)}</div></div>
+        <div class="m ${chk("accuracy")}"><div class="k">Accuracy</div><div class="v">${pct(d.accuracy)}</div></div>
+        <div class="m ${chk("latency")}"><div class="k">95% within</div><div class="v">${dur(d.p95_ms)}</div></div>
+      </div>
+      <div class="k" style="margin-top:10px">${i === 0 ? "Why this one" : "Trade-off vs architecture 1"}</div>
       <div class="chips">${lines.map((l) => `<span class="chip2">${esc(l)}</span>`).join("")}</div>
-      ${i === 0 ? "" : `<p class="pick"><b>Pick if</b> ${esc(d.pick_if)}</p>`}
+      ${i === 0 ? "" : `<p class="pick-if"><b>Choose it if</b> ${esc(d.pick_if)}</p>`}
+      <div class="addons"><span class="ev ${EV[d.evidence][1]}" data-tip="${esc(EV[d.evidence][2])}">${EV[d.evidence][0]}</span>
+        ${d.sources && d.sources.length ? `<span class="hint">· ${d.sources.map((s) => `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title.split(" — ")[0])}</a>`).join(", ")}</span>` : ""}</div>
     </article>`;
   }).join("");
+}
+
+function renderPlatforms() {
+  const plats = ["All", ...new Set(ADV.model_table.map((r) => r.platform))];
+  if (!plats.includes(PLATFORM)) PLATFORM = "All";
+  $("#platformSeg").innerHTML = plats.map((p) => `<button data-v="${esc(p)}" class="${p === PLATFORM ? "on" : ""}">${esc(p.replace(" API", ""))}</button>`).join("");
+  $("#platformSeg").onclick = (e) => { const b = e.target.closest("button"); if (!b) return; PLATFORM = b.dataset.v; renderPlatforms(); renderTable(); };
+}
+
+function renderTable() {
+  const d = ADV.top[0], p = ADV.models;
+  let rows = ADV.model_table.filter((r) => (PLATFORM === "All" || r.platform === PLATFORM) && (!$("#onlyMeets").checked || r.meets));
+  $("#tableTitle").textContent = `Every model for this agent — priced in architecture 1, cheapest first`;
+  $("#tableHint").innerHTML = `Monthly cost if each model ran in <b>${esc(d.name)}</b> at ${SPEC.requests_per_day.toLocaleString()} requests/day.` +
+    (d.arch === "decision_model" && d.escalation_rate != null ? ` Here Jev answers ${pct(1 - d.escalation_rate)} of requests, so the LLM only handles the rest and the model choice changes cost very little.` : "") +
+    ` Target: ${pct(SPEC.accuracy_target)} accuracy, at most ${pct(SPEC.max_hallucination)} hallucinations, 95% within ${dur(SPEC.latency_budget_ms)}.`;
+  const max = Math.max(...ADV.model_table.map((r) => r.monthly));
+  const result = (r) => r.id === p.primary ? '<span class="tagp">Best model</span>' : r.id === p.fallback ? '<span class="tagf">Fallback</span>'
+    : !r.tested ? '<span class="hint">not tested</span>' : r.meets ? '<span class="yes">meets all</span>'
+    : `<span class="no">misses ${esc(r.checks.filter((c) => !c.pass).map((c) => c.label.toLowerCase()).join(", "))}</span>`;
+  $("#mtable").innerHTML = `<thead><tr><th>#</th><th>Model · platform</th><th>Price per 1M (in / out)</th><th>Measured</th>
+    <th class="num">Accuracy</th><th class="num">Halluc.</th><th class="num">95% within</th><th class="num">Per 1K correct</th><th>Per month</th><th>Result</th></tr></thead><tbody>` +
+    rows.map((r, i) => `<tr class="${r.id === p.primary ? "rowp" : r.id === p.fallback ? "rowf" : ""} ${r.tested ? "" : "rowr"}">
+      <td class="hint">${ADV.model_table.indexOf(r) + 1}</td>
+      <td><b>${esc(r.label)}</b><div class="hint">${esc(r.maker)} · ${esc(r.platform)}</div></td>
+      <td>$${r.in} / $${r.out}<div>${statusBadge(r)}</div></td>
+      <td><span class="modebadge ${r.mode}" data-tip="${esc(r.mode === "estimate" ? `Not tested: cost estimated from ${mlabel(r.estimated_from)}'s token use at this model's price.` : r.live_error ? "Live call failed from this server: " + r.live_error : r.mode === "live" ? "Measured with live API calls." : "Simulated from a model profile.")}">${r.mode}</span></td>
+      <td class="num">${pct(r.accuracy)}</td><td class="num">${pct(r.halluc)}</td><td class="num">${dur(r.p95_ms)}</td>
+      <td class="num">${r.cost_per_1k_correct == null ? "—" : fmt$(r.cost_per_1k_correct)}</td>
+      <td class="costcell"><span class="cbar" style="width:${Math.max(2, 100 * r.monthly / max)}%"></span><b>${r.tested ? "" : "~"}${fmt$(r.monthly)}</b></td>
+      <td>${result(r)}</td></tr>`).join("") + "</tbody>";
 }
 
 function renderDetails() {
@@ -365,15 +374,16 @@ function renderDetails() {
     notes.map((a) => `<li>${esc(a)}</li>`).join("");
   fillAdjust();
   const d = ADV.top[0];
-  $("#build").innerHTML = `<ol class="steps-ol">${(BUILD[d.arch] || []).map((x) => `<li>${esc(x)}</li>`).join("")}${d.addons.map((a) => `<li>Add <b>${esc(a.name)}</b>: ${esc(a.why)}.</li>`).join("")}</ol>
+  $("#build").innerHTML = `<ol class="steps-ol">${(BUILD[d.arch] || []).map((x) => `<li>${esc(x)}</li>`).join("")}${d.addons.map((a) => `<li>Add <b>${esc(a.name)}</b>: ${esc(a.why)}.</li>`).join("")}
+    <li>Configure <b>${esc(modelName(ADV.models.fallback))}</b> as the fallback in the AI Gateway.</li></ol>
     ${d.components ? `<p class="hint">Components: ${d.components.map(esc).join(" · ")}</p>` : ""}`;
-  $("#ruled").innerHTML = Object.entries(ADV.not_applicable).map(([k, why]) => `<li><b>${esc((ADV.all.find((x) => x.arch === k) || {}).name || KNAME[k] || k)}</b>: ${esc(why)}.</li>`).join("");
-  const ids = Object.keys(ADV.per_case), cols = ids.map((m) => [modelLabel(m), ADV.per_case[m]]).concat(ADV.jev_per_case ? [["Jev", ADV.jev_per_case]] : []);
-  $("#cases").innerHTML = `<thead><tr><th>Test case</th><th>Expected</th>${cols.map(([n]) => `<th>${esc(n)}</th>`).join("")}</tr></thead><tbody>` +
-    ADV.cases.map((c, i) => `<tr><td style="white-space:normal;min-width:220px">${esc(c.input.slice(0, 140))}</td><td>${esc(c.expected || "—")}</td>` +
+  $("#ruled").innerHTML = Object.entries(ADV.not_applicable).map(([k, why]) => `<li><b>${esc(KNAME[k] || k)}</b>: ${esc(why)}.</li>`).join("");
+  const ids = Object.keys(ADV.per_case), cols = ids.map((m) => [modelName(m), ADV.per_case[m]]).concat(ADV.jev_per_case ? [["Jev", ADV.jev_per_case]] : []);
+  $("#cases").innerHTML = `<thead><tr><th>Test case</th><th>Expected</th>${cols.map(([n]) => `<th class="rot">${esc(n)}</th>`).join("")}</tr></thead><tbody>` +
+    ADV.cases.map((c, i) => `<tr><td style="white-space:normal;min-width:220px">${esc(c.input.slice(0, 120))}</td><td>${esc(c.expected || "—")}</td>` +
       cols.map(([, rs]) => { const r = rs[i]; return `<td class="${r.correct ? "cell-ok" : r.correct === false ? "cell-bad" : ""}" title="${esc(r.answer)}">${r.correct ? "✓" : r.correct === false ? (r.hallucinated ? "⚠" : "✗") : "·"}</td>`; }).join("") + "</tr>").join("") + "</tbody>";
 }
-const KNAME = { single_call: "Single model call", cascade: "Small model first, escalate when unsure", decision_model: "Decision model with LLM fallback",
+const KNAME = { rag_cascade: "RAG with small-to-large escalation", single_call: "Single model call", cascade: "Small model first, escalate when unsure", decision_model: "Decision model with LLM fallback",
   long_context: "Whole documents in the prompt", rag: "RAG", workflow: "Fixed workflow", evaluator_optimizer: "Draft, critique and revise",
   tool_agent: "Tool-using agent", multi_agent: "Orchestrator with specialist agents", batch: "Batch pipeline" };
 
@@ -406,27 +416,34 @@ function readAdjust() {
 
 // ---------------------------------------------------------------- decision record
 function downloadADR() {
-  const a = ADV.top[0], s = SPEC, st = strength(), today = new Date().toISOString().slice(0, 10);
-  const row = (d, i) => `| ${i + 1} | ${d.name} | ${modelLabel(d.models.primary)} | ${pct(d.accuracy)} | ${dur(d.p95_ms)} | ${fmt$(d.monthly)} | ${EV[d.evidence][0]} |`;
+  const a = ADV.top[0], s = SPEC, p = ADV.models, st = strength(), today = new Date().toISOString().slice(0, 10), fb = p.fallback_design;
+  const arow = (d, i) => `| ${i + 1} | ${d.name} | ${modelName(d.models.primary)} | ${pct(d.accuracy)} | ${dur(d.p95_ms)} | ${fmt$(d.monthly)} | ${EV[d.evidence][0]} |`;
+  const mrow = (r, i) => `| ${i + 1} | ${r.label} | ${r.platform} | $${r.in} / $${r.out} (${r.status}) | ${r.mode} | ${pct(r.accuracy)} | ${pct(r.halluc)} | ${r.tested ? "" : "~"}${fmt$(r.monthly)} | ${r.id === p.primary ? "Best model" : r.id === p.fallback ? "Fallback" : r.meets ? "meets all" : r.tested ? "misses" : "not tested"} |`;
   const md = `# ADR: ${s.summary}
 
 - **Date:** ${today} · **Status:** Proposed
-- **Decision:** ${a.name} on ${modelLabel(a.models.primary)}${a.models.fallback ? `; fallback ${modelLabel(a.models.fallback)}` : ""}${["cascade", "workflow", "multi_agent"].includes(a.arch) ? `; small model ${modelLabel(a.models.small)}` : ""}
+- **Best model:** ${modelName(p.primary)} — ${fmt$(a.monthly)}/month, ${pct(a.accuracy)} accurate, hallucinations ${pct(a.halluc)}, 95% within ${dur(a.p95_ms)}
+- **Fallback:** ${p.fallback ? `${modelName(p.fallback)} — ${fmt$(fb.monthly)}/month, ${pct(fb.accuracy)} accurate` : "none qualified"}
+- **Architecture:** ${a.name} (${a.flow.join(" → ")})
 - **Evidence:** ${st[0]} — ${st[2]}
-- **Knowledge used:** patterns reviewed ${KNOW.patterns_reviewed_on}; ${KNOW.models_verified}/${KNOW.models_total} model prices verified${(a.unverified_models || []).length ? ` (unverified here: ${a.unverified_models.map(modelLabel).join(", ")})` : ""}
 
 ## Context
 ${TASK[s.task_type]}${s.labels.length ? ` (${s.labels.join(", ")})` : ""} · ${LAT[s.latency]} · ${s.requests_per_day.toLocaleString()}/day · target ${pct(s.accuracy_target)} · risk ${s.risk}${s.handles_personal_data ? " · personal data" : ""}
 
-## Options
+## Top 3 architectures
 | # | Architecture | Model | Accuracy | 95% within | Per month | Evidence |
 |---|---|---|---|---|---|---|
-${ADV.top.map(row).join("\n")}
+${ADV.top.map(arow).join("\n")}
 
-## Why ${a.name}
+### Why architecture 1
 ${a.why.map((w) => `- ${w}`).join("\n")}
 
-${ADV.top.slice(1).map((d, i) => `### Option ${i + 2}: ${d.name}\n- Trade-off vs #1: ${d.tradeoffs.join("; ")}\n- Pick if ${d.pick_if}`).join("\n\n")}
+${ADV.top.slice(1).map((d, i) => `### Architecture ${i + 2}: ${d.name}\n- Trade-off vs architecture 1: ${d.tradeoffs.join("; ")}\n- Choose it if ${d.pick_if}`).join("\n\n")}
+
+## Every model, priced in architecture 1 (cheapest first)
+| # | Model | Platform | Price per 1M | Measured | Accuracy | Halluc. | Per month | Result |
+|---|---|---|---|---|---|---|---|---|
+${ADV.model_table.map(mrow).join("\n")}
 
 ## Build plan
 ${(BUILD[a.arch] || []).map((x) => `1. ${x}`).join("\n")}
@@ -439,9 +456,8 @@ ${(a.sources || []).map((x) => `- [${x.title}](${x.url})`).join("\n")}
   el.href = URL.createObjectURL(new Blob([md], { type: "text/markdown" }));
   el.download = `ADR-${s.summary.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40)}.md`;
   el.click(); URL.revokeObjectURL(el.href);
-  track("adr_downloaded", { architecture: a.arch, model: a.models.primary });
+  track("adr_downloaded", { architecture: a.arch, model: p.primary, fallback: p.fallback });
 }
-addEventListener("resize", () => { if (ADV) { renderCompare(); renderModelsChart(); } });
 </script>
 </body>
 </html>

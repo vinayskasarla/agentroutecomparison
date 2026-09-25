@@ -27,9 +27,23 @@ import catalog
 import advisor
 import audit
 from pii import redact
+import pricing_sync
 from providers import ROUTE_QUESTION, call_jev, call_llm, has_jev_key, has_key, jev_answer_question
 
 app = FastAPI(title="LLM Path Lab")
+
+
+@app.on_event("startup")
+async def refresh_prices():
+    """Pull current prices from the machine-readable sources in the background; failures keep reviewed values."""
+    if os.environ.get("PRICE_SYNC", "on") != "off":
+        async def run():
+            try:
+                report = await asyncio.wait_for(pricing_sync.sync(), 120)
+                audit.log("prices_synced", None, sources=report["sources"], changes=report["changes"])
+            except Exception as exc:
+                audit.log("prices_sync_failed", None, error=f"{type(exc).__name__}: {exc}")
+        asyncio.create_task(run())
 PAGES = {"/": "advisor", "/ask": "ask", "/benchmark": "benchmark"}
 
 
@@ -519,16 +533,17 @@ async def api_advise(req: AdviseReq, request: Request):
                          "architect_model": advisor.ARCHITECT_MODEL if source == "claude" else None})
 
         live_providers = [p for p in catalog.PROVIDERS if has_key(p)] if not req.force_sim else []
-        models = [m["id"] for m in catalog.MODELS if not live_providers or m["provider"] in live_providers]
+        # Every callable offering is tested: live where this server has access, simulated elsewhere (labelled per row).
+        models = [m["id"] for m in catalog.CALLABLE]
         use_jev = bool(spec["labels"]) and all(i.get("options") and i.get("accept") for i in items)
         total = len(items) * (len(models) + (1 if use_jev else 0))
         await queue.put({"type": "stage", "stage": "test", "models": models, "cases": len(items), "total": total,
                          "live": bool(live_providers), "jev": use_jev, "jev_live": has_jev_key() and not req.force_sim})
         sem, done = asyncio.Semaphore(8), [0]
 
-        async def one_llm(model, item):
+        async def one_llm(model, item, force_sim=req.force_sim):
             async with sem:
-                r = await call_llm(model, item["q"], item=item if item.get("accept") else None, force_sim=req.force_sim)
+                r = await call_llm(model, item["q"], item=item if item.get("accept") else None, force_sim=force_sim)
             correct = grade(r["answer"], item["accept"]) if item.get("accept") and not r["error"] else (
                 False if item.get("accept") else None)
             done[0] += 1
@@ -555,15 +570,26 @@ async def api_advise(req: AdviseReq, request: Request):
 
         per_model = await asyncio.gather(*[asyncio.gather(*[one_llm(m, it) for it in items]) for m in models])
         res = dict(zip(models, per_model))
+        # A model whose live calls all failed can't be reached from here: it's simulated instead, and labelled.
+        unavailable = {m: next(r["error"] for r in rs) for m, rs in res.items() if rs and all(r["error"] for r in rs)}
+        for m in unavailable:
+            res[m] = list(await asyncio.gather(*[one_llm(m, it, force_sim=True) for it in items]))
+        mode = {m: "simulated" if all(r["simulated"] for r in rs) else "live" for m, rs in res.items()}
         jev = list(await asyncio.gather(*[one_jev(it) for it in items])) if use_jev else None
         await queue.put({"type": "stage", "stage": "rank"})
-        result = advisor.rank_designs(spec, res, jev)
+        result = advisor.rank_designs(spec, res, jev, mode)
+        for row in result["model_table"]:
+            if row["id"] in unavailable:
+                row["mode"], row["live_error"] = "simulated", str(unavailable[row["id"]])[:160]
+        result["unavailable"] = [{"id": m, "label": catalog.MODEL_BY_ID[m]["label"], "platform": catalog.MODEL_BY_ID[m]["platform"],
+                                  "error": str(e)[:160]} for m, e in unavailable.items()]
         status = {m["id"]: m["status"] for m in catalog.MODELS}
         for d in result["all"]:
             d["unverified_models"] = sorted({m for m in d["models"].values() if m and status.get(m) != "verified"})
         audit.log("advise_completed", request, goal=req.goal, spec_source=source, task_type=spec["task_type"],
                   labels=spec["labels"], latency=spec["latency"], requests_per_day=spec["requests_per_day"],
-                  risk=spec["risk"], cases=len(items), models_tested=models, simulated=not live_providers,
+                  risk=spec["risk"], cases=len(items), models_tested=list(res), models_live=[m for m, v in mode.items() if v == "live"],
+                  models_unavailable=list(unavailable),
                   needs_confirmation=[c["field"] for c in confirm],
                   top3=[{"rank": i + 1, "architecture": d["arch"], "model": d["models"]["primary"],
                          "fallback": d["models"]["fallback"], "small": d["models"]["small"],
@@ -571,7 +597,8 @@ async def api_advise(req: AdviseReq, request: Request):
                          "meets_requirements": d["passes"]} for i, d in enumerate(result["top"])],
                   duration_ms=round((time.perf_counter() - started) * 1000))
         await queue.put({"type": "advice", **result, "evaluated_models": models,
-                         "simulated": any(r["simulated"] for rs in res.values() for r in rs),
+                         "simulated": any(v == "simulated" for v in mode.values()), "mode": mode,
+                         "live_count": sum(v == "live" for v in mode.values()),
                          "cases": [{"input": c["input"], "expected": c["expected"]} for c in spec["test_cases"]],
                          "per_case": {m: [{k: r[k] for k in ("answer", "correct", "hallucinated", "latency_ms")} for r in rs]
                                       for m, rs in res.items()},
@@ -607,7 +634,14 @@ async def api_events(ev: ClientEvent, request: Request):
 
 @app.get("/api/knowledge")
 async def api_knowledge():
-    return advisor.knowledge_status()
+    return {**advisor.knowledge_status(), "last_price_sync": pricing_sync.LAST_SYNC or None}
+
+
+@app.post("/api/knowledge/sync-prices")
+async def api_sync_prices(request: Request):
+    report = await pricing_sync.sync()
+    audit.log("prices_synced", request, sources=report["sources"], changes=report["changes"])
+    return report
 
 
 NON_CHAT = re.compile(r"embed|tts|whisper|dall-e|image|audio|moderation|realtime|transcri|search|computer|veo|imagen|aqa|speech|video", re.I)
@@ -618,7 +652,10 @@ async def api_knowledge_check(request: Request):
     """Compare the catalog with each provider's live model list: flags retired IDs and new ones to review."""
     out = {}
     for provider, info in catalog.PROVIDERS.items():
-        ours = [m["id"] for m in catalog.MODELS if m["provider"] == provider]
+        ours = [m["id"] for m in catalog.MODELS if m["provider"] == provider and m.get("callable", True)]
+        if provider in ("bedrock", "azure", "vertex"):
+            out[provider] = {"checked": False, "reason": "prices come from the price sync; model IDs are resolved when called"}
+            continue
         if not has_key(provider):
             out[provider] = {"checked": False, "reason": f"{info['env']} not set"}
             continue

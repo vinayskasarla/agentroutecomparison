@@ -312,7 +312,7 @@ def compose(arch, models, res, jev, spec):
         if arch == "batch":
             rows = [{**r, "cost": r["cost"] * 0.5, "ms": 30 * 60 * 1000} for r in rows]
         return rows, "measured" if arch in ("single_call", "long_context") else "composed"
-    if arch == "cascade":
+    if arch in ("cascade", "rag_cascade"):
         small, large = _direct_rows(res, models["small"]), _direct_rows(res, models["primary"])
         rows = []
         for s, g in zip(small, large):
@@ -320,6 +320,8 @@ def compose(arch, models, res, jev, spec):
                 rows.append({**s, "escalated": False})
             else:
                 rows.append({**g, "cost": s["cost"] + g["cost"], "ms": s["ms"] + g["ms"], "escalated": True})
+        if arch == "rag_cascade":  # plus the retrieval step
+            rows = [{**r, "ms": r["ms"] + 120, "cost": r["cost"] + 0.00002} for r in rows]
         return rows, "composed"
     if arch == "decision_model":
         large = _direct_rows(res, models["primary"])
@@ -358,6 +360,7 @@ def applicable(spec):
         "cascade": (not tools and not multi, "the task needs actions or several steps"),
         "decision_model": (labels and not tools, "the answer isn't one of a fixed set of labels"),
         "rag": (docs, "answers don't need to come from your own documents"),
+        "rag_cascade": (docs, "answers don't need to come from your own documents"),
         "workflow": (multi or tools or t in ("summarization", "generation"), "the task is a single step"),
         "tool_agent": (tools, "the agent doesn't need to call your systems or take actions"),
         "evaluator_optimizer": (t in ("generation", "summarization", "research") and not tools,
@@ -404,62 +407,131 @@ def pick_models(res, spec, provider_of):
     return {"primary": primary, "best": best, "best_large": best_large, "small": small, "fallback": fallback, "table": rows, "qualifying": good}
 
 
-def rank_designs(spec, res, jev):
-    """Build every candidate design, check it against the requirements, and return the top 3 with reasons."""
+def build_design(arch, models, variant, res, jev, spec):
+    """One architecture with specific models: metrics composed from measured results, checked against requirements."""
+    rows, evidence = compose(arch, models, res, jev, spec)
+    m = _agg(rows)
+    addons = addons_for(arch, spec)
+    infra = sum(a["per_1k"] for a in addons) / 1000
+    cache = next((a for a in addons if a["id"] == "cache"), None)
+    per_req = m["cost_per_req"] * (1 - spec["repeat_rate"] if cache else 1) + infra
+    p95 = m["p95_ms"] + sum(a["ms"] for a in addons)
+    d = {
+        "arch": arch, **ARCHITECTURES[arch],
+        "sources": [PATTERN_KNOWLEDGE["sources"][k] for k in ARCHITECTURES[arch].get("sources", [])],
+        "variant": variant, "models": dict(models), "evidence": evidence, "addons": addons,
+        "accuracy": m["accuracy"], "right": m["right"], "n": m["n"], "halluc": m["halluc"],
+        "p50_ms": m["p50_ms"], "p95_ms": p95, "cost_per_req": per_req, "monthly": per_req * spec["requests_per_day"] * 30,
+        "escalation_rate": (sum(1 for r in rows if r.get("escalated")) / len(rows)) if rows and arch in ("cascade", "rag_cascade", "decision_model") else None,
+    }
+    d["checks"] = checks(d, spec)
+    d["passes"] = all(c["pass"] for c in d["checks"])
+    return d
+
+
+def model_table(first, spec, res, jev, picks, mode):
+    """Every model offering priced under the #1 architecture, so the table and the recommendation agree.
+    Tested models use their measured results; 'reported' ones get a cost estimate from a tested model of the
+    same tier (same token counts, their own price) and no accuracy."""
+    rows = []
+    def row(m, d, tested, ref=None):
+        info = catalog.MODEL_BY_ID[m]
+        acc = d["accuracy"] if tested else None
+        return {"id": m, "label": info["label"], "maker": info["maker"], "platform": info["platform"],
+                "tier": info["tier"], "in": info["in"], "out": info["out"], "status": info.get("status"),
+                "verified_on": info.get("verified_on"), "source": info.get("source"), "note": info.get("review_note"),
+                "tested": tested, "estimated_from": ref, "mode": mode.get(m, "simulated") if tested else "estimate", "accuracy": acc, "halluc": d["halluc"] if tested else None,
+                "p95_ms": d["p95_ms"] if tested else None, "monthly": d["monthly"], "cost_per_req": d["cost_per_req"],
+                "cost_per_1k_correct": (d["cost_per_req"] * 1000 / acc) if acc else None,
+                "own_cost_per_req": _agg(_direct_rows(res if tested else {**res, m: res[ref]}, m))["cost_per_req"],
+                "meets": d["passes"] if tested else None, "checks": d["checks"] if tested else []}
+    for m in res:
+        d = build_design(first["arch"], {**first["models"], "primary": m}, "table", res, jev, spec)
+        rows.append(row(m, d, True))
+    tested_ids = list(res)
+    for info in catalog.MODELS:
+        if info.get("callable", True) or info["id"] in res:
+            continue
+        same = [t for t in tested_ids if catalog.MODEL_BY_ID[t]["tier"] == info["tier"]] or tested_ids
+        ref = next((t for t in same if catalog.MODEL_BY_ID[t]["maker"] == info["maker"]), same[0])
+        d = build_design(first["arch"], {**first["models"], "primary": info["id"]}, "table", {**res, info["id"]: res[ref]}, jev, spec)
+        rows.append(row(info["id"], d, False, ref))
+    # Cheapest first; ties (e.g. when Jev answers nearly everything) go to the model that's cheaper on its own.
+    rows.sort(key=lambda r: (round(r["monthly"], 2), r["own_cost_per_req"]))
+    return rows
+
+
+def choose_from_table(table, first):
+    """Primary: the cheapest tested model meeting every requirement (verified prices first).
+    Fallback: the cheapest qualifying model on a different platform, so an outage of one doesn't take both down."""
+    tested = [r for r in table if r["tested"]]
+    # Prefer rows measured live over simulated ones whenever any live row qualifies.
+    if any(r["meets"] and r["mode"] == "live" for r in tested):
+        tested = [r for r in tested if r["mode"] == "live"]
+    good = [r for r in tested if r["meets"]]
+    pool = [r for r in good if r["status"] == "verified"] or good
+    primary = pool[0] if pool else max(tested, key=lambda r: (r["accuracy"] or 0, -(r["halluc"] or 0), -r["monthly"]))
+    others = [r for r in good if r["platform"] != primary["platform"]]
+    others = ([r for r in others if r["status"] == "verified" and r["maker"] != primary["maker"]]
+              or [r for r in others if r["status"] == "verified"] or others)
+    if not others:
+        others = sorted([r for r in tested if r["platform"] != primary["platform"]],
+                        key=lambda r: (-(r["accuracy"] or 0), r["monthly"]))
+    return primary["id"], (others[0]["id"] if others else None), [r["id"] for r in good]
+
+
+def cheaper_unverified(table, primary_id):
+    """A cheaper model that met every requirement but whose price isn't verified, so it wasn't picked."""
+    prim = next((r for r in table if r["id"] == primary_id), None)
+    for r in table:
+        if r["id"] == primary_id or not prim:
+            break
+        if r["tested"] and r["meets"] and r["status"] != "verified" and r["monthly"] < prim["monthly"] * 0.9:
+            return {"id": r["id"], "label": r["label"], "platform": r["platform"], "monthly": r["monthly"]}
+    return None
+
+
+def rank_designs(spec, res, jev, mode=None):
+    """For every architecture that fits: price every model inside it, pick its best model and fallback,
+    check it against the requirements; then rank the architectures and return the top 3 with reasons."""
+    mode = mode or {}
     provider_of = lambda m: catalog.MODEL_BY_ID[m]["provider"]  # noqa: E731
     picks = pick_models(res, spec, provider_of)
     ok, why_not = applicable(spec)
     if jev is None and "decision_model" in ok:
         ok.remove("decision_model")
         why_not["decision_model"] = "Jev needs a fixed set of labels to choose from"
-    rpd, repeat = spec["requests_per_day"], spec["repeat_rate"]
     designs = []
     for arch in ok:
-        if arch == "cascade":
-            large = picks["best"] if catalog.MODEL_BY_ID[picks["best"]]["tier"] != "small" else picks["best_large"]
-            variants = [(large, "value")] if large and large != picks["small"] else []
-        else:
-            variants = [(picks["primary"], "value")] + ([(picks["best"], "quality")] if picks["best"] != picks["primary"] else [])
-            if picks["fallback"] and picks["fallback"] not in (picks["primary"], picks["best"]):
-                variants.append((picks["fallback"], "other provider"))
-            if picks["best_large"] and all(picks["best_large"] != v for v, _ in variants):
-                variants.append((picks["best_large"], "stronger model"))
-        for primary, variant in variants:
-            models = {"primary": primary, "small": picks["small"], "fallback": picks["fallback"]}
-            rows, evidence = compose(arch, models, res, jev, spec)
-            m = _agg(rows)
-            addons = addons_for(arch, spec)
-            infra = sum(a["per_1k"] for a in addons) / 1000
-            cache = next((a for a in addons if a["id"] == "cache"), None)
-            per_req = m["cost_per_req"] * (1 - repeat if cache else 1) + infra
-            p95 = m["p95_ms"] + sum(a["ms"] for a in addons)
-            d = {
-                "arch": arch, **ARCHITECTURES[arch],
-                "sources": [PATTERN_KNOWLEDGE["sources"][k] for k in ARCHITECTURES[arch].get("sources", [])],
-                "variant": variant, "models": models, "evidence": evidence, "addons": addons,
-                "accuracy": m["accuracy"], "right": m["right"], "n": m["n"], "halluc": m["halluc"],
-                "p50_ms": m["p50_ms"], "p95_ms": p95, "cost_per_req": per_req, "monthly": per_req * rpd * 30,
-                "escalation_rate": (sum(1 for r in rows if r.get("escalated")) / len(rows)) if rows and arch in ("cascade", "decision_model") else None,
-            }
-            d["checks"] = checks(d, spec)
-            d["passes"] = all(c["pass"] for c in d["checks"])
-            designs.append(d)
+        cascade = arch in ("cascade", "rag_cascade")
+        base = {"primary": picks["best_large"] if cascade else picks["primary"], "small": picks["small"], "fallback": None}
+        probe = build_design(arch, base, "probe", res, jev, spec)
+        table = model_table(probe, spec, res, jev, picks, mode)
+        if cascade:  # the escalation model has to be a bigger model than the small one
+            table = [r for r in table if r["tier"] != "small" or not r["tested"]]
+        if not any(r["tested"] for r in table):
+            continue
+        primary, fallback, good = choose_from_table(table, probe)
+        d = build_design(arch, {**base, "primary": primary, "fallback": fallback}, "value", res, jev, spec)
+        d["_table"], d["_good"], d["_cheaper"] = table, good, cheaper_unverified(table, primary)
+        designs.append(d)
     score_designs(designs, spec)
     designs.sort(key=lambda d: (not d["passes"], -d["score"]))
-    top, seen = [], set()
-    for d in designs:  # prefer three different architectures, then fill with model variants
-        if d["arch"] not in seen:
-            top.append(d)
-            seen.add(d["arch"])
-        if len(top) == 3:
-            break
+    top = designs[:3]
+    table = []
+    if top:
+        first = top[0]
+        table = first["_table"]
+        picks.update(primary=first["models"]["primary"], fallback=first["models"]["fallback"], qualifying=first["_good"],
+                     cheaper_unverified=first["_cheaper"])
+        if first["models"]["fallback"]:
+            fbd = build_design(first["arch"], {**first["models"], "primary": first["models"]["fallback"]}, "fallback", res, jev, spec)
+            picks["fallback_design"] = {k: fbd[k] for k in ("accuracy", "right", "n", "halluc", "p95_ms", "monthly", "cost_per_req", "passes")}
     for d in designs:
-        if len(top) == 3:
-            break
-        if d not in top:
-            top.append(d)
+        for k in ("_table", "_good", "_cheaper"):
+            d.pop(k, None)
     explain(top, spec, picks)
-    return {"top": top, "all": designs, "not_applicable": why_not, "models": picks}
+    return {"top": top, "all": designs, "not_applicable": why_not, "models": picks, "model_table": table}
 
 
 def addons_for(arch, spec):
@@ -476,7 +548,7 @@ def addons_for(arch, spec):
     if spec["risk"] == "high":
         out.append({"id": "review", "name": "Human review", "why": "high-impact decisions below 80% confidence go to a person",
                     "ms": 0, "per_1k": 0})
-    if spec["needs_documents"] and arch != "rag":
+    if spec["needs_documents"] and arch not in ("rag", "rag_cascade", "long_context"):
         out.append({"id": "grounding", "name": "Grounding check", "why": "verify each answer is supported by your documents",
                     "ms": 0, "per_1k": 0})
     return out
@@ -554,6 +626,7 @@ def explain(top, spec, picks):
         "decision_model": f"The answer is one of {len(spec['labels'])} labels, so Jev decides "
                           f"{_pct(1 - (first['escalation_rate'] or 0))} of requests in about a tenth of a second for a fraction of a cent.",
         "long_context": "Your documents are small enough to send with every request, so you get grounded answers without building a search index.",
+        "rag_cascade": "Answers come from your documents, and most questions are easy enough for the small model; only the unsure ones pay for the large model.",
         "rag": "Answers have to come from your documents; retrieving the right passages first keeps them grounded and lets the model say 'unknown'.",
         "workflow": "The job has predictable steps, so a fixed pipeline is easier to test and debug than a free-roaming agent.",
         "tool_agent": "The agent has to act in your systems, and which tools it needs varies per request.",
@@ -562,9 +635,9 @@ def explain(top, spec, picks):
         "evaluator_optimizer": "Written quality matters here, and a second review pass catches issues a single draft misses.",
     }[first["arch"]]
     reasons.append(arch_why)
-    reasons.append(f"{label(first['models']['primary'])} is the cheapest tested model that reached your accuracy target."
+    reasons.append(f"{label(first['models']['primary'])} is the cheapest model that meets every requirement in this architecture."
                    if first["models"]["primary"] in picks["qualifying"]
-                   else f"{label(first['models']['primary'])} was the most accurate model tested, but none reached the target.")
+                   else f"{label(first['models']['primary'])} was the most accurate model tested, but none met every requirement.")
     first["why"] = reasons
     for d in top[1:]:
         t = []
@@ -590,7 +663,7 @@ def explain(top, spec, picks):
         dc = d["complexity"] - first["complexity"]
         if dc:
             t.append("more to build and operate" if dc > 0 else "simpler to build and operate")
-        if d["arch"] in ("cascade", "decision_model") and d["escalation_rate"] is not None:
+        if d["arch"] in ("cascade", "rag_cascade", "decision_model") and d["escalation_rate"] is not None:
             big = label(d["models"]["primary"])
             t.append(f"{_pct(d['escalation_rate'])} of your cases escalated to {big}"
                      + (" — the harder mix in real traffic will raise that" if d["escalation_rate"] < 0.05 else ""))
@@ -625,12 +698,14 @@ def knowledge_status(today=None) -> dict:
     def age(d):
         return (today - datetime.date.fromisoformat(d)).days if d else None
     mk, pk = catalog.MODEL_KNOWLEDGE, PATTERN_KNOWLEDGE
-    models = [{**{k: m.get(k) for k in ("id", "label", "provider", "tier", "in", "out", "status", "verified_on", "source", "review_note")},
+    models = [{**{k: m.get(k) for k in ("id", "label", "maker", "platform", "provider", "tier", "in", "out", "status",
+                                         "verified_on", "source", "review_note", "price_source", "callable")},
                "age_days": age(m.get("verified_on"))} for m in mk["models"]]
     stale = [m for m in models if m["status"] != "verified" or (m["age_days"] or 0) > mk["review_every_days"]]
+    reported = [m for m in models if m["status"] == "reported"]
     return {
         "models": models, "watchlist": mk.get("watchlist", []), "model_review_every_days": mk["review_every_days"],
-        "models_verified": len(models) - len(stale), "models_total": len(models),
+        "models_verified": len(models) - len(stale), "models_total": len(models), "models_reported": len(reported),
         "models_needing_review": [m["id"] for m in stale],
         "patterns_reviewed_on": pk["reviewed_on"], "patterns_age_days": age(pk["reviewed_on"]),
         "patterns_stale": age(pk["reviewed_on"]) > pk["review_every_days"],

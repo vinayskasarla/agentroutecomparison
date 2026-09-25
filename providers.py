@@ -13,7 +13,9 @@ import time
 import anthropic
 import httpx
 
-from catalog import JEV, MODEL_BY_ID, PROVIDERS, SIM_PROFILE
+import asyncio
+
+from catalog import JEV, MODEL_BY_ID, PROVIDERS, base_model, sim_profile
 
 # Secrets created by the Terraform setup start as this placeholder until you store a real value.
 # Treat them as unset so that provider runs in simulated mode instead of failing auth.
@@ -31,8 +33,43 @@ _http = httpx.AsyncClient(timeout=90)
 _anthropic = None
 
 
+_aws_creds = None
+
+
+def _aws_available() -> bool:
+    global _aws_creds
+    if _aws_creds is None:
+        try:
+            import boto3
+            _aws_creds = boto3.Session().get_credentials() is not None
+        except Exception:
+            _aws_creds = False
+    return _aws_creds
+
+
 def has_key(provider: str) -> bool:
+    """Whether this platform can be called live from here."""
+    if provider == "bedrock":
+        return _aws_available()
+    if provider == "azure":
+        return bool((os.environ.get("AZURE_OPENAI_ENDPOINT") and os.environ.get("AZURE_OPENAI_API_KEY"))
+                    or (os.environ.get("AZURE_FOUNDRY_RESOURCE") and os.environ.get("AZURE_FOUNDRY_API_KEY")))
+    if provider == "vertex":
+        return bool(os.environ.get("GOOGLE_CLOUD_PROJECT"))
     return bool(os.environ.get(PROVIDERS[provider]["env"]))
+
+
+def available(model_id: str) -> bool:
+    """Whether this specific model offering can be called live."""
+    m = MODEL_BY_ID[model_id]
+    if not m.get("callable", True) or not has_key(m["provider"]):
+        return False
+    if m["provider"] == "azure":
+        env = ("AZURE_FOUNDRY_RESOURCE", "AZURE_FOUNDRY_API_KEY") if m["maker"] == "Anthropic" else ("AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_API_KEY")
+        return all(os.environ.get(e) for e in env)
+    if m["provider"] == "vertex":
+        return m["maker"] == "Anthropic"  # Gemini on Vertex isn't wired for live calls yet
+    return True
 
 
 def est_tokens(text: str) -> int:
@@ -54,12 +91,19 @@ def parse_answer(text: str):
 
 async def call_llm(model_id: str, prompt: str, *, item=None, extra_context_tokens=0,
                    force_sim=False, seed=0):
-    provider = MODEL_BY_ID[model_id]["provider"]
-    if force_sim or not has_key(provider):
+    m = MODEL_BY_ID[model_id]
+    provider = m["provider"]
+    if force_sim or not available(model_id):
         return simulate(model_id, prompt, item=item, extra_context_tokens=extra_context_tokens, seed=seed)
     start = time.perf_counter()
     try:
-        if provider == "anthropic":
+        if m["maker"] == "Anthropic" and provider in ("bedrock", "azure", "vertex"):
+            text, tin, tout = await _call_claude_on_cloud(m, prompt)
+        elif provider == "bedrock":
+            text, tin, tout = await _call_bedrock(m, prompt)
+        elif provider == "azure":
+            text, tin, tout = await _call_azure_openai(m, prompt)
+        elif provider == "anthropic":
             text, tin, tout = await _call_anthropic(model_id, prompt)
         elif provider == "google":
             text, tin, tout = await _call_gemini(model_id, prompt)
@@ -76,15 +120,17 @@ async def call_llm(model_id: str, prompt: str, *, item=None, extra_context_token
             "model": model_id, "error": None}
 
 
-async def _call_anthropic(model_id, prompt):
+async def _call_anthropic(model_id, prompt, client=None, api_model=None):
     global _anthropic
-    if _anthropic is None:
-        _anthropic = anthropic.AsyncAnthropic()
+    if client is None:
+        if _anthropic is None:
+            _anthropic = anthropic.AsyncAnthropic()
+        client = _anthropic
     kwargs = {}
     if model_id != "claude-haiku-4-5":
         kwargs["output_config"] = {"effort": "low"}  # short factual answers; keep thinking light
-    resp = await _anthropic.messages.create(
-        model=model_id, max_tokens=2000, system=SYSTEM,
+    resp = await client.messages.create(
+        model=api_model or model_id, max_tokens=2000, system=SYSTEM,
         messages=[{"role": "user", "content": prompt}], **kwargs,
     )
     if resp.stop_reason == "refusal":
@@ -120,13 +166,83 @@ async def _call_gemini(model_id, prompt):
     return "".join(p.get("text", "") for p in parts), usage.get("promptTokenCount", 0), out
 
 
+_cloud_clients = {}
+
+
+async def _call_claude_on_cloud(m, prompt):
+    """Claude on Bedrock, Azure AI Foundry or Vertex AI, through the Anthropic SDK's platform clients."""
+    base = base_model(m["id"])
+    if m["provider"] not in _cloud_clients:
+        if m["provider"] == "bedrock":
+            _cloud_clients["bedrock"] = anthropic.AsyncAnthropicBedrockMantle(aws_region=os.environ.get("AWS_REGION", "us-east-1"))
+        elif m["provider"] == "azure":
+            _cloud_clients["azure"] = anthropic.AsyncAnthropicFoundry(api_key=os.environ["AZURE_FOUNDRY_API_KEY"],
+                                                                      resource=os.environ["AZURE_FOUNDRY_RESOURCE"])
+        else:
+            _cloud_clients["vertex"] = anthropic.AsyncAnthropicVertex(project_id=os.environ["GOOGLE_CLOUD_PROJECT"],
+                                                                      region=os.environ.get("VERTEX_REGION", "global"))
+    api_model = m.get("api_model") or (f"anthropic.{base}" if m["provider"] == "bedrock" else base)
+    return await _call_anthropic(base, prompt, client=_cloud_clients[m["provider"]], api_model=api_model)
+
+
+_bedrock_ids = {}
+
+
+def _resolve_bedrock_id(m):
+    """Find the Bedrock model (or inference profile) ID by model name, so IDs aren't hard-coded."""
+    import boto3
+    region = os.environ.get("AWS_REGION", "us-east-1")
+    bedrock = boto3.client("bedrock", region_name=region)
+    norm = lambda x: re.sub(r"[^a-z0-9]", "", x.lower())  # noqa: E731
+    want = norm(m.get("aws_name") or m["label"])
+    found = None
+    for s in bedrock.list_foundation_models(byOutputModality="TEXT")["modelSummaries"]:
+        if norm(s["modelName"]).startswith(want) or want.startswith(norm(s["modelName"])):
+            found = s
+            break
+    if not found:
+        raise RuntimeError(f"no Bedrock model named like {m.get('aws_name') or m['label']} in {region}")
+    if "ON_DEMAND" in found.get("inferenceTypesSupported", []):
+        return found["modelId"]
+    for p in bedrock.list_inference_profiles()["inferenceProfileSummaries"]:
+        if any(found["modelId"] in mm.get("modelArn", "") for mm in p.get("models", [])):
+            return p["inferenceProfileId"]
+    raise RuntimeError(f"{found['modelId']} needs an inference profile and none was found")
+
+
+async def _call_bedrock(m, prompt):
+    import boto3
+    if m["id"] not in _bedrock_ids:
+        _bedrock_ids[m["id"]] = m.get("bedrock_id") or await asyncio.to_thread(_resolve_bedrock_id, m)
+    client = boto3.client("bedrock-runtime", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+    resp = await asyncio.to_thread(client.converse, modelId=_bedrock_ids[m["id"]], system=[{"text": SYSTEM}],
+                                   messages=[{"role": "user", "content": [{"text": prompt}]}],
+                                   inferenceConfig={"maxTokens": 2000})
+    text = "".join(c.get("text", "") for c in resp["output"]["message"]["content"])
+    return text, resp["usage"]["inputTokens"], resp["usage"]["outputTokens"]
+
+
+async def _call_azure_openai(m, prompt):
+    """Azure AI Foundry's OpenAI-compatible v1 endpoint; the deployment name defaults to the base model ID."""
+    endpoint = os.environ["AZURE_OPENAI_ENDPOINT"].rstrip("/")
+    body = {"model": m.get("azure_deployment") or base_model(m["id"]),
+            "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}]}
+    resp = await _http.post(f"{endpoint}/openai/v1/chat/completions", json=body,
+                            headers={"api-key": os.environ["AZURE_OPENAI_API_KEY"]})
+    resp.raise_for_status()
+    data = resp.json()
+    usage = data.get("usage", {})
+    return data["choices"][0]["message"]["content"], usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
+
+
 def simulate(model_id, prompt, *, item=None, extra_context_tokens=0, seed=0):
     """Deterministic stand-in for a model call (no sleeping — latency is reported, not waited).
 
     `item` is a graded test case ({difficulty, sim_right, sim_wrong}); without one the answer is a placeholder.
     """
-    prof = SIM_PROFILE[model_id]
-    digest = hashlib.sha256(f"{model_id}|{prompt}|{seed}".encode()).hexdigest()
+    prof = sim_profile(model_id)
+    # seeded by the underlying model, so the same model on another cloud gives the same answers
+    digest = hashlib.sha256(f"{base_model(model_id)}|{prompt}|{seed}".encode()).hexdigest()
     rng = random.Random(int(digest[:12], 16))
     if item and item.get("sim_right") is not None:
         correct = rng.random() < prof["skill"][item["difficulty"]]

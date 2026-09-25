@@ -152,8 +152,8 @@ fetch("/api/config").then((r) => r.json()).then((cfg) => {
   const sel = $("#model");
   for (const [pid, p] of Object.entries(cfg.providers)) {
     const g = document.createElement("optgroup"); g.label = p.label;
-    cfg.models.filter((m) => m.provider === pid).forEach((m) => {
-      const o = document.createElement("option"); o.value = m.id; o.textContent = `${m.label}  ·  $${m.in} / $${m.out}`;
+    cfg.models.filter((m) => m.provider === pid && m.callable !== false).forEach((m) => {
+      const o = document.createElement("option"); o.value = m.id; o.textContent = `${m.label}${m.platform && !m.platform.startsWith(m.maker) ? " · " + m.platform : ""}  ·  $${m.in} / $${m.out}`;
       g.appendChild(o);
     });
     sel.appendChild(g);
