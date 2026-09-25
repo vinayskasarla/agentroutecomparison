@@ -150,6 +150,29 @@ principles, each tied to a published source (Anthropic, OpenAI, AWS Well-Archite
 Agentic AI lenses). The cross-check flags any disagreement between Claude's reading of the goal and the
 keyword rules, for the user to confirm.
 
+## Model news tab
+
+`/news` fetches the providers' official feeds when you open the tab (cached for 30 minutes; **Refresh now**
+forces a fetch). It filters them to model launches, pricing changes, retirements and features, and checks
+every model name mentioned against the catalog.
+
+- Sources are in `knowledge/news_sources.json`:
+  - Anthropic API release notes
+  - OpenAI news
+  - Google AI and DeepMind blogs
+  - AWS What's New for Bedrock, and the AWS ML blog
+  - Azure updates for AI Foundry
+  - the Hugging Face blog
+- Models mentioned in the news but missing from `knowledge/models.json` are listed at the top as **Not in our
+  catalog yet**. That's the to-do list for keeping the advisor current.
+- A source that can't be reached from the server is shown as unreachable instead of being silently skipped.
+
+## Signed-in user
+
+Once SSO is in front of the app, the header shows the user's name, email and initials, read from the same
+headers the audit trail uses (`/api/me`). Set `LOGOUT_URL` to show a *Sign out* link. Without SSO it shows
+*Guest*.
+
 ## Audit trail (CloudWatch)
 
 Every user action is written as one JSON line on stdout with `"log_type": "audit"`; App Runner ships it to

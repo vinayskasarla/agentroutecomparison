@@ -1,0 +1,17 @@
+{
+  "note": "Official sources for model launches, pricing changes and retirements. Add or remove freely; each is fetched when someone opens the News tab (cached 30 minutes).",
+  "sources": [
+    {"id": "anthropic-release-notes", "name": "Anthropic API release notes", "provider": "Anthropic", "type": "markdown_release_notes",
+     "url": "https://platform.claude.com/docs/en/release-notes/overview.md", "link": "https://platform.claude.com/docs/en/release-notes/overview"},
+    {"id": "openai-news", "name": "OpenAI news", "provider": "OpenAI", "type": "rss", "url": "https://openai.com/news/rss.xml"},
+    {"id": "google-ai", "name": "Google AI blog", "provider": "Google", "type": "rss", "url": "https://blog.google/technology/ai/rss/"},
+    {"id": "deepmind", "name": "Google DeepMind blog", "provider": "Google", "type": "rss", "url": "https://deepmind.google/blog/rss.xml"},
+    {"id": "aws-whats-new", "name": "AWS What's New (Bedrock)", "provider": "AWS", "type": "rss", "url": "https://aws.amazon.com/about-aws/whats-new/recent/feed/",
+     "must_match": "bedrock|nova|model"},
+    {"id": "aws-ml-blog", "name": "AWS Machine Learning blog", "provider": "AWS", "type": "rss", "url": "https://aws.amazon.com/blogs/machine-learning/feed/",
+     "must_match": "bedrock|model|nova|claude|llama"},
+    {"id": "azure-updates", "name": "Azure updates (AI Foundry)", "provider": "Microsoft", "type": "rss",
+     "url": "https://www.microsoft.com/releasecommunications/api/v2/azure/rss", "must_match": "openai|foundry|gpt|model|phi|\\bai\\b"},
+    {"id": "huggingface", "name": "Hugging Face blog", "provider": "Open models", "type": "rss", "url": "https://huggingface.co/blog/feed.xml"}
+  ]
+}

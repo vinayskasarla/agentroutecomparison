@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Model News</title>
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Model news</h1>
+      <p class="sub">New models, price changes and retirements from the providers' official feeds — checked against the models the advisor knows about.</p>
+      <nav class="tabs"><a href="/">Architecture advisor</a><a href="/ask">Ask a question</a><a href="/benchmark">Benchmark</a><a href="/news" class="on">Model news</a></nav>
+    </div>
+    <div class="hdr-right"><button class="ghost" id="theme" title="Toggle light / dark">◐</button></div>
+  </header>
+
+  <section class="card newsbar">
+    <div class="nb-left">
+      <div class="nb-k">Not in our catalog yet</div>
+      <div id="missing" class="nb-missing"><span class="hint">Loading…</span></div>
+    </div>
+    <div class="nb-right">
+      <button class="primary" id="refresh">↻ Refresh now</button>
+      <div class="hint" id="fetched"></div>
+    </div>
+  </section>
+
+  <div class="newsfilters">
+    <div class="seg" id="catSeg">
+      <button data-v="all" class="on">All</button><button data-v="new_model">New models</button><button data-v="pricing">Pricing</button>
+      <button data-v="retirement">Retirements</button><button data-v="feature">Features</button>
+    </div>
+    <div class="seg" id="provSeg"></div>
+  </div>
+
+  <div id="list" class="newslist"></div>
+
+  <section class="card">
+    <h2>Sources</h2>
+    <p class="hint" style="margin:0 0 8px">Edit <code>knowledge/news_sources.json</code> to add or remove feeds. A source that can't be reached from the server is shown here rather than silently skipped.</p>
+    <div class="tablewrap"><table id="sources"></table></div>
+  </section>
+</main>
+<div id="tip"></div>
+<script src="/static/common.js"></script>
+<script>
+const CAT = { new_model: ["New model", "c-new"], pricing: ["Pricing", "c-price"], retirement: ["Retirement", "c-retire"], feature: ["Feature", "c-feat"] };
+let DATA = null, CATF = "all", PROV = "All", SHOW = 20;
+seg("#catSeg", (v) => { CATF = v; SHOW = 20; renderList(); });
+$("#refresh").onclick = () => load(true);
+load(false);
+
+async function load(refresh) {
+  $("#refresh").disabled = true; $("#fetched").textContent = "Fetching the latest…";
+  try {
+    DATA = await fetch("/api/news" + (refresh ? "?refresh=1" : "")).then((r) => r.json());
+    render();
+  } catch (e) { $("#fetched").textContent = "Couldn't load news: " + e.message; }
+  $("#refresh").disabled = false;
+}
+function render() {
+  const d = DATA, ok = d.sources.filter((s) => s.ok).length;
+  $("#fetched").textContent = `Updated ${d.fetched_at.replace("T", " ").slice(0, 16)} UTC · ${ok} of ${d.sources.length} sources reachable`;
+  $("#missing").innerHTML = d.not_in_catalog.length
+    ? d.not_in_catalog.map((n) => `<span class="missing" data-tip="Mentioned in the news but not in knowledge/models.json. Confirm its API ID and price, then add it.">${esc(n)}</span>`).join("")
+    : `<span class="yes">Every model mentioned is in the catalog.</span>`;
+  const provs = ["All", ...new Set(d.items.map((i) => i.provider))];
+  $("#provSeg").innerHTML = provs.map((p) => `<button data-v="${esc(p)}" class="${p === PROV ? "on" : ""}">${esc(p)}</button>`).join("");
+  $("#provSeg").onclick = (e) => { const b = e.target.closest("button"); if (!b) return; PROV = b.dataset.v; SHOW = 20;
+    $("#provSeg").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); renderList(); };
+  $("#sources").innerHTML = `<thead><tr><th>Source</th><th>Provider</th><th class="num">Items</th><th>Status</th></tr></thead><tbody>` +
+    d.sources.map((s) => `<tr><td><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.name)}</a></td><td>${esc(s.provider)}</td>
+      <td class="num">${s.items}</td><td>${s.ok ? '<span class="yes">✓ reachable</span>' : `<span class="no">unreachable</span> <span class="hint">${esc(s.error || "")}</span>`}</td></tr>`).join("") + "</tbody>";
+  renderList();
+}
+function renderList() {
+  if (!DATA) return;
+  const matching = DATA.items.filter((i) => (CATF === "all" || i.category === CATF) && (PROV === "All" || i.provider === PROV));
+  const items = matching.slice(0, SHOW);
+  let last = null;
+  $("#list").innerHTML = items.length ? items.map((i) => {
+    const day = i.date ? new Date(i.date + "T00:00:00Z").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }) : "Undated";
+    const head = day !== last ? `<div class="newsday">${esc(day)}</div>` : ""; last = day;
+    return head + `<article class="newsitem">
+      <div class="nhead"><span class="ncat ${CAT[i.category][1]}">${CAT[i.category][0]}</span><span class="nprov">${esc(i.provider)}</span>
+        ${i.models.map((m) => `<span class="nmodel ${m.in_catalog ? "" : "new"}" data-tip="${m.in_catalog ? "In the advisor's catalog" : "Not in the catalog yet"}">${esc(m.name)}${m.in_catalog ? "" : " · new to us"}</span>`).join("")}</div>
+      <a class="ntitle" href="${esc(i.link)}" target="_blank" rel="noopener">${esc(i.title)}</a>
+      ${i.summary && i.summary !== i.title ? `<p class="nsum">${esc(i.summary)}</p>` : ""}
+      <div class="hint">${esc(i.source)}</div></article>`;
+  }).join("") + (matching.length > SHOW ? `<button class="ghost showmore" id="more">Show more (${matching.length - SHOW} older)</button>` : "")
+    : `<p class="hint card">No items match these filters.</p>`;
+  const more = $("#more"); if (more) more.onclick = () => { SHOW += 20; renderList(); };
+}
+</script>
+</body>
+</html>

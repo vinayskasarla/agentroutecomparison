@@ -12,7 +12,7 @@
     <div>
       <h1>Architecture Advisor</h1>
       <p class="sub">Describe your agent. Get the best model, its fallback, the top 3 architectures and what every model would cost — tested on your use case.</p>
-      <nav class="tabs"><a href="/" class="on">Architecture advisor</a><a href="/ask">Ask a question</a><a href="/benchmark">Benchmark</a></nav>
+      <nav class="tabs"><a href="/" class="on">Architecture advisor</a><a href="/ask">Ask a question</a><a href="/benchmark">Benchmark</a><a href="/news">Model news</a></nav>
     </div>
     <div class="hdr-right">
       <button class="kpill" id="kpill" title="Where prices and patterns come from"></button>
@@ -55,11 +55,8 @@
   <section id="results" class="hidden">
     <div class="confirm hidden" id="confirm"></div>
 
-    <!-- 1. The answer -->
-    <section class="card statement" id="statement"></section>
-
-    <!-- 2. Best model · Fallback · Architecture -->
-    <div class="picks" id="picks"></div>
+    <!-- 1. The answer: winner + fallback -->
+    <section class="hero" id="hero"></section>
 
     <!-- 3. Top 3 architectures -->
     <h2 class="sectiontitle" id="archTitle">Top 3 architectures for this agent</h2>
@@ -75,6 +72,7 @@
         </div>
       </div>
       <div class="tablewrap"><table id="mtable" class="mtable"></table></div>
+      <div class="pager" id="pager"></div>
     </section>
 
     <!-- Details -->
@@ -156,7 +154,8 @@ const BUILD = {
   multi_agent: ["Lead model plans and splits the work.", "Workers run in parallel on the small model with search tools.", "Lead merges and cites; cap steps and spend per run."],
   batch: ["Queue requests; submit via the providers' batch APIs (~50% off).", "Store results in S3; retry failures next batch.", "Keep an on-demand path for urgent requests."],
 };
-let CFG, KNOW, ADV = null, SPEC = null, SRC = null, PLATFORM = "All";
+let CFG, KNOW, ADV = null, SPEC = null, SRC = null, PLATFORM = "All", PAGE = 1;
+const PER_PAGE = 10;
 
 // ---------------------------------------------------------------- setup
 $("#examples").innerHTML = EXAMPLES.map(([t, g]) => `<button class="ex" type="button" data-goal="${esc(g)}">${esc(t)}</button>`).join("");
@@ -172,7 +171,7 @@ $("#kpill").onclick = () => { $("#kpanel").classList.toggle("hidden"); track("kn
 $("#kclose").onclick = () => $("#kpanel").classList.add("hidden");
 $("#kcheck").onclick = liveCheck;
 $("#ksync").onclick = syncPrices;
-$("#onlyMeets").onchange = renderTable;
+$("#onlyMeets").onchange = () => { PAGE = 1; renderTable(); };
 document.querySelectorAll("details[data-d]").forEach((d) => d.addEventListener("toggle", () => d.open && track("details_opened", { section: d.dataset.d })));
 function track(event, data) { fetch("/api/events", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ event, data }) }).catch(() => {}); }
 
@@ -261,46 +260,56 @@ function render() {
   $("#confirm").classList.toggle("hidden", !conf.length);
   $("#confirm").innerHTML = conf.length ? `<b>Please confirm:</b> ${conf.map((c) => `${esc(c.label)} read as <b>${esc(String(c.architect))}</b> (rules suggest ${esc(String(c.rules))})`).join(" · ")}. <a href="#" id="fixit">Adjust</a>` : "";
   if (conf.length) $("#fixit").onclick = (e) => { e.preventDefault(); document.querySelector('details[data-d="understood"]').open = true; $("#adjust").classList.remove("hidden"); };
-  renderStatement(); renderPicks(); renderArchitectures(); renderPlatforms(); renderTable(); renderDetails();
+  PAGE = 1; renderHero(); renderArchitectures(); renderPlatforms(); renderTable(); renderDetails();
 }
 
-function renderStatement() {
-  const d = ADV.top[0], p = ADV.models, pr = row(p.primary), fb = p.fallback ? row(p.fallback) : null, st = strength();
-  $("#statement").innerHTML = `
-    <div class="eyebrow">For this agent</div>
-    <p class="goalline">“${esc(SPEC.summary)}”</p>
-    <p class="verdict-text">Use <b>${esc(modelName(p.primary))}</b> in a <b>${esc(d.name)}</b> architecture:
-      <b>${fmt$(d.monthly)}/month</b>, <b>${pct(d.accuracy)}</b> correct on ${d.n} test cases, 95% of answers within <b>${dur(d.p95_ms)}</b>.
-      ${fb ? `If it's unavailable, fall back to <b>${esc(modelName(p.fallback))}</b> (${fmt$(p.fallback_design.monthly)}/month, ${pct(p.fallback_design.accuracy)} correct).` : "No qualifying fallback on another platform was found."}</p>
-    <div class="stmeta"><span class="strength ${st[1]}">Evidence: ${st[0]}</span> <span class="hint">${esc(st[2])}</span>
-      ${d.passes ? "" : `<span class="no">Closest option — misses ${d.checks.filter((c) => !c.pass).map((c) => c.label.toLowerCase()).join(", ")}.</span>`}</div>`;
+function tile(k, v, sub, state) {
+  return `<div class="tile ${state || ""}"><div class="tk">${k}</div><div class="tv">${v}</div><div class="ts">${sub || "&nbsp;"}</div></div>`;
 }
-
-function modelCard(title, sub, id, m, isPrimary) {
-  const i = info(id), r = row(id);
-  const kv = (k, v, cls = "") => `<div class="m ${cls}"><div class="k">${k}</div><div class="v">${v}</div></div>`;
-  const chk = (key) => { const c = m.checks && m.checks.find((x) => x.key === key); return c && !c.pass ? "bad" : ""; };
-  return `<article class="pick ${isPrimary ? "first" : ""}">
-    <div class="k">${title}</div><div class="hint">${sub}</div>
-    <div class="pname">${esc(mlabel(id))}</div>
-    <div class="hint">${esc(i.maker || "")} · ${esc(i.platform || "")} · $${i.in} / $${i.out} per 1M tokens · ${statusBadge(i)}${r && r.mode ? ` · <span class="modebadge ${r.mode}">${r.mode}</span>` : ""}</div>
-    <div class="ms ms5">
-      ${kv("Per month", fmt$(m.monthly), chk("cost"))}${kv("Accuracy", pct(m.accuracy), chk("accuracy"))}${kv("Hallucinations", pct(m.halluc), chk("halluc"))}
-      ${kv("95% within", dur(m.p95_ms), chk("latency"))}${kv("Per 1K correct", m.accuracy ? fmt$(m.cost_per_req * 1000 / m.accuracy) : "—")}
-    </div></article>`;
+function reqChips(d) {
+  const lab = { accuracy: "Accuracy", halluc: "Hallucinations", latency: "Speed", cost: "Budget" };
+  const tgt = (c) => c.key === "latency" ? `95% ≤ ${dur(c.target)}` : c.key === "cost" ? `≤ ${fmt$(c.target)}` : c.key === "halluc" ? `≤ ${pct(c.target)}` : `≥ ${pct(c.target)}`;
+  return d.checks.map((c) => `<span class="req ${c.pass ? "ok" : "bad"}">${c.pass ? "✓" : "✗"} ${lab[c.key]} ${tgt(c)}</span>`).join("");
 }
-
-function renderPicks() {
-  const d = ADV.top[0], p = ADV.models;
+function renderHero() {
+  const d = ADV.top[0], p = ADV.models, st = strength(), i = info(p.primary), r = row(p.primary), fbi = p.fallback ? info(p.fallback) : null, fb = p.fallback_design;
+  const good = ADV.model_table.filter((x) => x.tested && x.meets).map((x) => x.monthly).sort((a, b) => a - b);
+  const median = good.length ? good[Math.floor(good.length / 2)] : null;
+  const saving = median ? Math.round((1 - d.monthly / median) * 100) : 0;
+  const why = good.length > 1 && saving >= 5 ? `Cheapest of <b>${good.length}</b> models that meet every requirement — <b>${saving}% below</b> the typical qualifying cost (${fmt$(median)}/mo).`
+    : good.length > 1 ? `<b>${good.length}</b> models meet every requirement at about this cost; this one wins on verified price, then its own per-request cost.`
+    : good.length === 1 ? "The only model that meets every requirement." : "No model met every requirement; this is the closest.";
   const cu = p.cheaper_unverified;
-  let html = modelCard("① Best model", "Cheapest model that meets every requirement in architecture 1", p.primary, d, true);
-  html += p.fallback ? modelCard("② Fallback model", "Used if the best model is down or unavailable — different platform", p.fallback, { ...p.fallback_design, checks: [] }, false)
-    : `<article class="pick"><div class="k">② Fallback model</div><p class="hint">No model on another platform met every requirement.</p></article>`;
-  html += `<article class="pick"><div class="k">③ Architecture</div><div class="hint">How the agent is put together</div>
-    <div class="pname">${esc(d.name)}</div><p class="what">${esc(d.what)}</p>
-    <div class="chain">${d.flow.map((x) => `<span class="node ${/LLM/.test(x) ? "llm" : ""}">${esc(x)}</span>`).join('<span class="arrow">→</span>')}</div>
-    <div class="addons">${d.addons.map((a) => `<span class="badge" data-tip="${esc(a.why)}">+ ${esc(a.name)}</span>`).join("")}</div></article>`;
-  $("#picks").innerHTML = html + (cu ? `<p class="cheaper hint">Cheaper option not picked: <b>${esc(cu.label)}</b> (${esc(cu.platform)}) met every requirement at ${fmt$(cu.monthly)}/month, but its price isn't verified. Confirm its price to make it eligible.</p>` : "");
+  $("#hero").innerHTML = `
+    <div class="hero-goal"><span class="eyebrow">Recommendation for</span><span>“${esc(SPEC.summary)}”</span></div>
+    <div class="hero-grid">
+      <article class="winner">
+        <div class="badge-row"><span class="medal">🏆 Winner · best model</span>${statusBadge(i)} ${r ? `<span class="modebadge ${r.mode}">${r.mode}</span>` : ""}</div>
+        <div class="wname">${esc(i.label || p.primary)}</div>
+        <div class="wmeta">${esc(i.maker || "")} · <b>${esc(i.platform || "")}</b> · $${i.in} / $${i.out} per 1M tokens</div>
+        <div class="warch">runs in <b>${esc(d.name)}</b></div>
+        <div class="tiles t4">
+          ${tile("Per month", fmt$(d.monthly), `${SPEC.requests_per_day.toLocaleString()} requests/day`, "hi")}
+          ${tile("Accuracy", pct(d.accuracy), `${d.right} of ${d.n} test cases`)}
+          ${tile("95% within", dur(d.p95_ms), `median ${dur(d.p50_ms)}`)}
+          ${tile("Per 1K correct", d.accuracy ? fmt$(d.cost_per_req * 1000 / d.accuracy) : "—", `hallucinations ${pct(d.halluc)}`)}
+        </div>
+        <p class="whywin">${why}</p>
+      </article>
+      <article class="runner">
+        <div class="badge-row"><span class="medal alt">↺ Fallback</span>${fbi ? statusBadge(fbi) : ""}</div>
+        ${fbi ? `<div class="rname">${esc(fbi.label)}</div>
+        <div class="wmeta">${esc(fbi.maker)} · <b>${esc(fbi.platform)}</b></div>
+        <div class="warch">Takes over if the winner is down or unavailable</div>
+        <div class="tiles t2">
+          ${tile("Per month", fmt$(fb.monthly), "")}${tile("Accuracy", pct(fb.accuracy), `${fb.right} of ${fb.n}`)}
+          ${tile("95% within", dur(fb.p95_ms), "")}${tile("Per 1K correct", fb.accuracy ? fmt$(fb.cost_per_req * 1000 / fb.accuracy) : "—", "")}
+        </div>` : `<p class="hint">No model on another platform met every requirement.</p>`}
+      </article>
+    </div>
+    <div class="hero-foot"><div class="reqs-row">${reqChips(d)}</div>
+      <div class="ev-row"><span class="strength ${st[1]}">Evidence: ${st[0]}</span><span class="hint">${esc(st[2])}</span></div></div>
+    ${cu ? `<p class="cheaper">💡 <b>${esc(cu.label)}</b> (${esc(cu.platform)}) also met every requirement at ${fmt$(cu.monthly)}/month but its price isn't verified yet — confirm it to make it eligible.</p>` : ""}`;
 }
 
 function renderArchitectures() {
@@ -316,10 +325,8 @@ function renderArchitectures() {
       <p class="what">${esc(d.what)}</p>
       <div class="chain">${d.flow.map((x) => `<span class="node ${/LLM/.test(x) ? "llm" : ""}">${esc(x)}</span>`).join('<span class="arrow">→</span>')}</div>
       <div class="hint" style="margin:8px 0 6px">Model: <b>${esc(modelName(d.models.primary))}</b>${["cascade", "rag_cascade", "workflow", "multi_agent"].includes(d.arch) ? ` · small: ${esc(mlabel(d.models.small))}` : ""}</div>
-      <div class="ms">
-        <div class="m ${chk("cost")}"><div class="k">Per month</div><div class="v">${fmt$(d.monthly)}</div></div>
-        <div class="m ${chk("accuracy")}"><div class="k">Accuracy</div><div class="v">${pct(d.accuracy)}</div></div>
-        <div class="m ${chk("latency")}"><div class="k">95% within</div><div class="v">${dur(d.p95_ms)}</div></div>
+      <div class="tiles t3">
+        ${tile("Per month", fmt$(d.monthly), "", chk("cost"))}${tile("Accuracy", pct(d.accuracy), "", chk("accuracy"))}${tile("95% within", dur(d.p95_ms), "", chk("latency"))}
       </div>
       <div class="k" style="margin-top:10px">${i === 0 ? "Why this one" : "Trade-off vs architecture 1"}</div>
       <div class="chips">${lines.map((l) => `<span class="chip2">${esc(l)}</span>`).join("")}</div>
@@ -334,12 +341,15 @@ function renderPlatforms() {
   const plats = ["All", ...new Set(ADV.model_table.map((r) => r.platform))];
   if (!plats.includes(PLATFORM)) PLATFORM = "All";
   $("#platformSeg").innerHTML = plats.map((p) => `<button data-v="${esc(p)}" class="${p === PLATFORM ? "on" : ""}">${esc(p.replace(" API", ""))}</button>`).join("");
-  $("#platformSeg").onclick = (e) => { const b = e.target.closest("button"); if (!b) return; PLATFORM = b.dataset.v; renderPlatforms(); renderTable(); };
+  $("#platformSeg").onclick = (e) => { const b = e.target.closest("button"); if (!b) return; PLATFORM = b.dataset.v; PAGE = 1; renderPlatforms(); renderTable(); };
 }
 
 function renderTable() {
   const d = ADV.top[0], p = ADV.models;
-  let rows = ADV.model_table.filter((r) => (PLATFORM === "All" || r.platform === PLATFORM) && (!$("#onlyMeets").checked || r.meets));
+  const all = ADV.model_table.filter((r) => (PLATFORM === "All" || r.platform === PLATFORM) && (!$("#onlyMeets").checked || r.meets));
+  const pages = Math.max(1, Math.ceil(all.length / PER_PAGE));
+  PAGE = Math.min(Math.max(1, PAGE), pages);
+  const rows = all.slice((PAGE - 1) * PER_PAGE, PAGE * PER_PAGE);
   $("#tableTitle").textContent = `Every model for this agent — priced in architecture 1, cheapest first`;
   $("#tableHint").innerHTML = `Monthly cost if each model ran in <b>${esc(d.name)}</b> at ${SPEC.requests_per_day.toLocaleString()} requests/day.` +
     (d.arch === "decision_model" && d.escalation_rate != null ? ` Here Jev answers ${pct(1 - d.escalation_rate)} of requests, so the LLM only handles the rest and the model choice changes cost very little.` : "") +
@@ -350,7 +360,7 @@ function renderTable() {
     : `<span class="no">misses ${esc(r.checks.filter((c) => !c.pass).map((c) => c.label.toLowerCase()).join(", "))}</span>`;
   $("#mtable").innerHTML = `<thead><tr><th>#</th><th>Model · platform</th><th>Price per 1M (in / out)</th><th>Measured</th>
     <th class="num">Accuracy</th><th class="num">Halluc.</th><th class="num">95% within</th><th class="num">Per 1K correct</th><th>Per month</th><th>Result</th></tr></thead><tbody>` +
-    rows.map((r, i) => `<tr class="${r.id === p.primary ? "rowp" : r.id === p.fallback ? "rowf" : ""} ${r.tested ? "" : "rowr"}">
+    rows.map((r) => `<tr class="${r.id === p.primary ? "rowp" : r.id === p.fallback ? "rowf" : ""} ${r.tested ? "" : "rowr"}">
       <td class="hint">${ADV.model_table.indexOf(r) + 1}</td>
       <td><b>${esc(r.label)}</b><div class="hint">${esc(r.maker)} · ${esc(r.platform)}</div></td>
       <td>$${r.in} / $${r.out}<div>${statusBadge(r)}</div></td>
@@ -359,6 +369,16 @@ function renderTable() {
       <td class="num">${r.cost_per_1k_correct == null ? "—" : fmt$(r.cost_per_1k_correct)}</td>
       <td class="costcell"><span class="cbar" style="width:${Math.max(2, 100 * r.monthly / max)}%"></span><b>${r.tested ? "" : "~"}${fmt$(r.monthly)}</b></td>
       <td>${result(r)}</td></tr>`).join("") + "</tbody>";
+  const at = (id) => { const k = all.findIndex((r) => r.id === id); return k < 0 ? null : Math.floor(k / PER_PAGE) + 1; };
+  const jumps = [["Best model", at(p.primary)], ["Fallback", at(p.fallback)]].filter(([, pg]) => pg && pg !== PAGE);
+  $("#pager").innerHTML = all.length <= PER_PAGE ? `<span class="hint">${all.length} models</span>` : `
+    <span class="hint">Showing ${(PAGE - 1) * PER_PAGE + 1}–${Math.min(PAGE * PER_PAGE, all.length)} of ${all.length} models</span>
+    <div class="pbtns"><button class="ghost" data-p="${PAGE - 1}" ${PAGE === 1 ? "disabled" : ""}>‹ Prev</button>
+      ${Array.from({ length: pages }, (_, k) => `<button class="${k + 1 === PAGE ? "on" : "ghost"}" data-p="${k + 1}">${k + 1}</button>`).join("")}
+      <button class="ghost" data-p="${PAGE + 1}" ${PAGE === pages ? "disabled" : ""}>Next ›</button></div>
+    ${jumps.map(([n, pg]) => `<button class="linkbtn" data-p="${pg}">Go to ${n.toLowerCase()} (page ${pg})</button>`).join("")}`;
+  $("#pager").onclick = (e) => { const b = e.target.closest("button[data-p]"); if (!b || b.disabled) return; PAGE = +b.dataset.p; renderTable();
+    $("#mtable").scrollIntoView({ behavior: "smooth", block: "start" }); };
 }
 
 function renderDetails() {

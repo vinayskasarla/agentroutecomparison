@@ -27,6 +27,7 @@ import catalog
 import advisor
 import audit
 from pii import redact
+import news
 import pricing_sync
 from providers import ROUTE_QUESTION, call_jev, call_llm, has_jev_key, has_key, jev_answer_question
 
@@ -44,7 +45,7 @@ async def refresh_prices():
             except Exception as exc:
                 audit.log("prices_sync_failed", None, error=f"{type(exc).__name__}: {exc}")
         asyncio.create_task(run())
-PAGES = {"/": "advisor", "/ask": "ask", "/benchmark": "benchmark"}
+PAGES = {"/": "advisor", "/ask": "ask", "/benchmark": "benchmark", "/news": "news"}
 
 
 @app.middleware("http")
@@ -632,6 +633,21 @@ async def api_events(ev: ClientEvent, request: Request):
     return {"ok": True}
 
 
+@app.get("/api/me")
+async def api_me(request: Request):
+    """The signed-in user as the SSO layer reports them (anonymous until SSO is in front of the app)."""
+    who = audit.identity(request.headers)
+    return {"signed_in": who["id"] != "anonymous", "name": who.get("name"), "email": who.get("email"), "id": who["id"],
+            "logout_url": os.environ.get("LOGOUT_URL")}
+
+
+@app.get("/api/news")
+async def api_news(request: Request, refresh: bool = False):
+    data = await news.get_news(refresh)
+    audit.log("news_viewed", request, refresh=refresh, items=len(data["items"]), not_in_catalog=data["not_in_catalog"])
+    return data
+
+
 @app.get("/api/knowledge")
 async def api_knowledge():
     return {**advisor.knowledge_status(), "last_price_sync": pricing_sync.LAST_SYNC or None}
@@ -707,6 +723,11 @@ async def advisor_page():
 @app.get("/benchmark")
 async def benchmark_page():
     return FileResponse(os.path.join(STATIC, "index.html"))
+
+
+@app.get("/news")
+async def news_page():
+    return FileResponse(os.path.join(STATIC, "news.html"))
 
 
 @app.get("/ask")

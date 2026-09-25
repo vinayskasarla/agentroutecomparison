@@ -76,3 +76,20 @@ document.addEventListener("mousemove", (e) => {
   tip.textContent = t.dataset.tip; tip.style.display = "block";
   tip.style.left = Math.min(e.clientX + 12, innerWidth - 290) + "px"; tip.style.top = e.clientY + 12 + "px";
 });
+
+
+// ---------- signed-in user (from SSO), shown top right on every page
+(function user() {
+  fetch("/api/me").then((r) => r.json()).then((u) => {
+    const host = document.querySelector(".hdr-right") || document.querySelector("header");
+    if (!host) return;
+    const el = document.createElement("div");
+    el.className = "userchip";
+    const name = u.name || u.email || (u.signed_in ? u.id : null);
+    const initials = name ? name.split(/[\s@._-]+/).filter(Boolean).slice(0, 2).map((x) => x[0].toUpperCase()).join("") : "?";
+    el.innerHTML = name
+      ? `<span class="avatar">${esc(initials)}</span><span class="uname"><b>${esc(u.name || u.email.split("@")[0])}</b>${u.email ? `<small>${esc(u.email)}</small>` : ""}</span>${u.logout_url ? `<a href="${esc(u.logout_url)}" class="hint">Sign out</a>` : ""}`
+      : `<span class="avatar anon">?</span><span class="uname"><b>Guest</b><small>Sign-in not configured</small></span>`;
+    host.prepend(el);
+  }).catch(() => {});
+})();
