@@ -551,6 +551,7 @@ class AdviseReq(BaseModel):
     fresh: bool = False  # skip the result cache
     multi_model: bool = True  # allow a different model per role (router, workers, escalation)
     compare: bool = False  # test every eligible model (rate-limited), instead of the first-run shortlist
+    priorities: list[str] = []  # what matters most: cost, accuracy, speed, simplicity (any combination)
 
 
 # Advice is computed on the fly and never stored per user. Finished results are kept in memory for a while, keyed
@@ -573,7 +574,7 @@ def _knowledge_version():
 def _advice_key(req, session_id=None):
     # Scoped to the browser session: a new browser session always gets a fresh run; the same session reuses it.
     body = {"sid": session_id, "cmp": req.compare, "goal": " ".join(req.goal.lower().split()), "spec": req.spec, "harness": req.harness, "sim": req.force_sim, "mm": req.multi_model,
-            "constraints": req.constraints or {}, "k": _knowledge_version()}
+            "pr": sorted(set(req.priorities)), "constraints": req.constraints or {}, "k": _knowledge_version()}
     return hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()[:32]
 
 
@@ -700,13 +701,13 @@ async def api_advise(req: AdviseReq, request: Request):
         if pin and not pinned:
             _lru_put(_spec_pins, pin, spec, 2000)
         spec = {**spec, **{k: v for k, v in (req.constraints or {}).items() if k in CONSTRAINT_KEYS and v not in (None, "")}}
-        spec = advisor.finalize_spec({**spec, "multi_model": req.multi_model})
+        spec = advisor.finalize_spec({**spec, "multi_model": req.multi_model, "priorities": req.priorities})
         spec["harness"] = req.harness
         items = normalize_items(advisor.items_for(spec))
         confirm = advisor.cross_check(spec, req.goal) if source in ("claude", "pinned") and req.goal else []
         use_judge = grading.judge_allowed(spec) and not req.force_sim
         judge_usage = []
-        spec_event = {"type": "spec", "spec": spec, "source": "compare" if req.compare else source, "note": note, "confirm": confirm,
+        spec_event = {"type": "spec", "spec": spec, "goal": req.goal, "source": "compare" if req.compare else source, "note": note, "confirm": confirm,
                       "architect_model": advisor.ARCHITECT_MODEL if source == "claude" else None}
         await queue.put(spec_event)
 

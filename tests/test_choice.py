@@ -58,3 +58,13 @@ def test_simulated_model_never_wins_when_anything_was_measured_live():
     assert advisor.choose_from_table(t, None)[0] == "live"
     t2 = [row("simA", "P1", 5, mode="simulated"), row("simB", "P2", 9, mode="simulated")]  # dry run: all simulated
     assert advisor.choose_from_table(t2, None)[0] == "simA"
+
+
+def test_cost_first_never_trades_hallucinations_for_price():
+    """Found live: with cost first and every model over the hallucination limit, the cheapest (13% made up) won."""
+    spec = {"priorities": ["cost"]}
+    row = lambda i, monthly, halluc: {"id": i, "tested": True, "mode": "live", "meets": False, "status": "verified",  # noqa: E731
+                                      "platform": "Anthropic API", "maker": "Anthropic", "monthly": monthly, "accuracy": 0.9,
+                                      "halluc": halluc, "p95_ms": 1000, "failed": ["halluc"]}
+    table = [row("claude-haiku-4-5", 100, 0.13), row("claude-sonnet-5", 300, 0.06)]
+    assert advisor.choose_from_table(table, None, spec)[0] == "claude-sonnet-5"

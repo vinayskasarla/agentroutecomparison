@@ -334,7 +334,7 @@ th { font-size: 12.5px; }
   background: var(--surface); border: 1px solid var(--grid); min-width: 0; }
 .tile .tk { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tile .tv { font-size: 24px; font-weight: 800; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; white-space: nowrap; line-height: 1.2; margin: 4px 0 2px; }
-.tile .ts { font-size: 12px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile .ts { font-size: 12px; color: var(--ink-2); line-height: 1.35; overflow-wrap: anywhere; }
 .tile.hi { background: var(--accent); border-color: var(--accent); }
 .tile.hi .tk, .tile.hi .ts { color: rgba(255, 255, 255, .85); } .tile.hi .tv { color: #fff; }
 .tile.bad { background: var(--bad-bg); border-color: transparent; } .tile.bad .tv { color: var(--bad); }
@@ -479,3 +479,11 @@ button.primary.big { font-size: 15.5px; padding: 11px 20px; }
 
 #stepper.hidden, #progressWrap.hidden { display: none; }
 @media (max-width: 600px) { .tile .ts, .tile .tk { white-space: normal; overflow: visible; text-overflow: clip; } }
+.prio { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 10px 0 12px; }
+.prio-k { font-weight: 600; font-size: 13.5px; }
+.prio-k small { font-weight: 400; color: var(--muted); }
+.prio .check { margin: 0; font-size: 13.5px; }
+.ans-goal { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px dashed var(--border); }
+.ans-goal q { font-size: 15px; font-weight: 600; color: var(--ink); quotes: "“" "”"; }
+.ans-u { font-size: 12.5px; color: var(--muted); }
+.prio-badge { font-weight: 600; }

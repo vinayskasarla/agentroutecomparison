@@ -96,3 +96,57 @@ def test_cheaper_option_is_shown_with_what_it_gives_up():
     assert c and c["monthly"] < r["top"][0]["monthly"] and c["saves"] > 0
     if not c["meets"]:
         assert "accuracy" in c["failed"] and any("Why not the cheaper" in w for w in r["top"][0]["why"])
+
+
+PRIO_MODELS = {"claude-haiku-4-5": 11, "claude-sonnet-5": 12, "claude-opus-5-5": 12, "bedrock-nova-micro": 10, "gpt-5-mini": 12}
+
+
+def _prio_rank(priorities, **over):
+    spec = make_spec(accuracy_target=0.9, priorities=priorities, **over)
+    return advisor.rank_designs(spec, make_res(PRIO_MODELS), None, {m: "live" for m in PRIO_MODELS})
+
+
+def test_default_and_cost_first_pick_the_cheapest_qualifying_model():
+    r = _prio_rank([])
+    qualifying = [x for x in r["model_table"] if x["tested"] and x["meets"]]
+    assert r["models"]["primary"] == qualifying[0]["id"]  # table is cheapest first
+
+
+def test_accuracy_first_picks_the_most_accurate_qualifying_model():
+    r = _prio_rank(["accuracy"])
+    best = max(x["accuracy"] for x in r["model_table"] if x["tested"] and x["meets"])
+    row = next(x for x in r["model_table"] if x["id"] == r["models"]["primary"])
+    assert row["accuracy"] == best == 1.0
+    assert any("highest accuracy first" in w for w in r["top"][0]["why"])
+
+
+def test_cost_first_accepts_a_small_accuracy_shortfall_but_never_hallucinations():
+    spec = make_spec(accuracy_target=0.95, priorities=["cost"])
+    assert advisor.accuracy_floor(spec) == 0.9 and advisor.accuracy_floor({**spec, "priorities": ["cost", "accuracy"]}) == 0.95
+    # 11/12 = 92%: fails a 95% target, passes it with cost first
+    d = {"accuracy": 11 / 12, "halluc": 0.0, "acc_lo": 0.6, "acc_hi": 0.99, "p95_ms": 100, "total_monthly": 1,
+         "models": {"primary": "claude-haiku-4-5"}, "context_needed": 1000, "peak": {"quota": None}}
+    acc = lambda s: next(c for c in advisor.checks(d, s) if c["key"] == "accuracy")  # noqa: E731
+    assert not acc({**spec, "priorities": []})["pass"] and acc(spec)["pass"] and acc(spec)["relaxed_from"] == 0.95
+    bad = {**d, "halluc": 0.2}
+    assert not next(c for c in advisor.checks(bad, spec) if c["key"] == "halluc")["pass"]
+
+
+def test_priorities_change_the_answer_only_through_the_spec():
+    a, b = _prio_rank(["accuracy"]), _prio_rank(["accuracy"])
+    assert summary(a) == summary(b)
+    assert advisor.finalize_spec({**make_spec(), "priorities": ["speed", "bogus", "cost"]})["priorities"] == ["cost", "speed"]
+
+
+def test_p90_is_between_median_and_p95():
+    d = _prio_rank([])["top"][0]
+    assert d["p50_ms"] <= d["p90_ms"] <= d["p95_ms"]
+
+
+def test_cost_first_architectures_keep_hallucinations_first():
+    spec = make_spec("Answer customer questions from our help center docs. 20k a day.", priorities=["cost"], accuracy_target=0.9)
+    res = make_res({"claude-sonnet-5": (11, {"halluc": 1}), "claude-haiku-4-5": (9, {"halluc": 3})})
+    r = advisor.rank_designs(spec, res, None, {m: "live" for m in res})
+    failing = [d for d in r["top"] if not d["passes"]]
+    rates = [d["halluc"] for d in failing]
+    assert rates == sorted(rates)

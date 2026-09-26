@@ -110,3 +110,15 @@ def test_guard_model_is_the_same_for_the_table_and_the_winner():
     first = r["top"][0]
     row = next(x for x in r["model_table"] if x["id"] == first["models"]["primary"])
     assert abs(row["monthly"] - first["monthly"]) < 1e-9
+
+
+def test_cached_answers_are_not_grounding_checked_again():
+    spec = make_spec("Answer customer questions from our help center docs. 20k a day.", harness=True)
+    res = make_res({"claude-sonnet-5": 12, "claude-haiku-4-5": 12})
+    models = {"primary": "claude-sonnet-5", "small": "claude-haiku-4-5", "guard": "claude-haiku-4-5", "fallback": None}
+    ctl = lambda d, k: next(c for c in d["harness"]["controls"] if c["id"] == k)["cost_per_req"]  # noqa: E731
+    none = advisor.build_design("rag", models, "x", res, None, {**spec, "repeat_rate": 0.0})
+    half = advisor.build_design("rag", models, "x", res, None, {**spec, "repeat_rate": 0.5})
+    if any(a["id"] == "cache" for a in half["addons"]):
+        assert abs(ctl(half, "grounding") - 0.5 * ctl(none, "grounding")) < 1e-12
+        assert ctl(half, "input_guard") == ctl(none, "input_guard")  # every request is still screened

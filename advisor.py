@@ -5,6 +5,7 @@ app.py runs the model evaluations and hands the per-test-case results to `rank_d
 """
 import datetime
 import json
+import math
 import os
 import re
 import statistics
@@ -326,6 +327,12 @@ def spec_from_rules(goal: str) -> dict:
     }
 
 
+# What the user cares about most, beyond the hard targets. Targets decide what qualifies; priorities decide which
+# qualifying option wins, and the trade-off when nothing qualifies. The hallucination limit is never traded away.
+PRIORITIES = {"cost": "Lowest cost", "accuracy": "Highest accuracy", "speed": "Fastest responses", "simplicity": "Simplest to build"}
+COST_FIRST_ACCURACY_SLACK = 0.05  # "Lowest cost" without "Highest accuracy" accepts up to 5 points under the accuracy target
+
+
 def finalize_spec(spec: dict) -> dict:
     s = dict(spec)
     s["task_type"] = s.get("task_type") if s.get("task_type") in TASK_TYPES else "open_qa"
@@ -383,6 +390,7 @@ def finalize_spec(spec: dict) -> dict:
     if s["specialists"]:
         s["multi_step"] = True
     s["multi_model"] = s.get("multi_model") is not False
+    s["priorities"] = [x for x in PRIORITIES if x in (s.get("priorities") or [])]
     return s
 
 
@@ -452,6 +460,7 @@ def _agg(rows):
         "halluc": (sum(1 for r in graded if r["halluc"]) / n) if n else None,
         "cost_per_req": statistics.fmean(r["cost"] for r in rows) if rows else 0.0,
         "p50_ms": _p([r["ms"] for r in rows], 0.5),
+        "p90_ms": _p([r["ms"] for r in rows], 0.9),
         "p95_ms": _p([r["ms"] for r in rows], 0.95),
     }
 
@@ -614,7 +623,7 @@ def pick_models(res, spec, provider_of, live=None):
     for m in res:
         agg = _agg(_direct_rows(res, m))
         rows[m] = agg
-    target = spec["accuracy_target"]
+    target = accuracy_floor(spec)
     good = [m for m, a in rows.items() if a["accuracy"] is not None and a["accuracy"] >= target
             and a["halluc"] <= spec["max_hallucination"]]
     verified = {m["id"] for m in catalog.MODELS if m.get("status") == "verified"}
@@ -659,7 +668,8 @@ def build_design(arch, models, variant, res, jev, spec):
     per_req = m["cost_per_req"] * (1 - spec["repeat_rate"] if cache else 1) + infra
     p95 = m["p95_ms"] + sum(a["ms"] for a in addons)
     per_req += constraints.embedding_cost_per_req(arch, spec)
-    harness = harness_for(arch, models, res, rows, spec, raw, guard) if spec.get("harness") else None
+    # Answers served from the response cache were checked when first generated; only new answers are checked again.
+    harness = harness_for(arch, models, res, rows, spec, raw, guard, 1 - spec["repeat_rate"] if cache else 1.0) if spec.get("harness") else None
     if harness:
         per_req += harness["cost_per_req"]
         p95 += harness["ms"]
@@ -674,7 +684,7 @@ def build_design(arch, models, variant, res, jev, spec):
         "accuracy": m["accuracy"], "right": m["right"], "n": m["n"], "halluc": m["halluc"],
         "acc_lo": m["acc_lo"], "acc_hi": m["acc_hi"], "tokens_per_call": tokens_per_call, "cached_share": cached_share,
         "infra": t["infra"], "infra_monthly": t["infra_monthly"], "build_weeks": t["build_weeks"], "build_usd": t["build_usd"],
-        "p50_ms": m["p50_ms"], "p95_ms": p95, "cost_per_req": per_req, "monthly": per_req * spec["requests_per_day"] * 30,
+        "p50_ms": m["p50_ms"], "p90_ms": m["p90_ms"] + (p95 - m["p95_ms"]), "p95_ms": p95, "cost_per_req": per_req, "monthly": per_req * spec["requests_per_day"] * 30,
         "escalation_rate": (sum(1 for r in rows if r.get("escalated")) / len(rows)) if rows and arch in ("cascade", "rag_cascade", "decision_model") else None,
     }
     d["total_monthly"] = d["monthly"] + d["infra_monthly"]
@@ -703,7 +713,7 @@ def model_table(first, spec, res, jev, picks, mode):
                 "acc_lo": d["acc_lo"] if tested else None, "acc_hi": d["acc_hi"] if tested else None,
                 "context": constraints.caps(m)["context"], "retirement": constraints.retirement(m),
                 "cached_share": d["cached_share"], "failed": [c["key"] for c in d["checks"] if not c["pass"]] if tested else [],
-                "p95_ms": d["p95_ms"] if tested else None, "monthly": d["monthly"], "cost_per_req": d["cost_per_req"],
+                "p90_ms": d["p90_ms"] if tested else None, "p95_ms": d["p95_ms"] if tested else None, "monthly": d["monthly"], "cost_per_req": d["cost_per_req"],
                 "cost_per_1k_correct": (d["cost_per_req"] * 1000 / acc) if acc else None,
                 "own_cost_per_req": _agg(_direct_rows(res if tested else {**res, m: res[ref]}, m))["cost_per_req"],
                 "meets": d["passes"] if tested else None, "checks": d["checks"] if tested else []}
@@ -737,8 +747,21 @@ def choose_from_table(table, first, spec=None):
         tested = live
     good = [r for r in tested if r["meets"]]
     pool = [r for r in good if r["status"] == "verified"] or good
-    # If nothing qualifies, the closest one must come from real measurements when there are any.
-    primary = pool[0] if pool else max(live or tested, key=lambda r: (r["accuracy"] or 0, -(r["halluc"] or 0), -r["monthly"]))
+    pr = [k for k in ((spec or {}).get("priorities") or []) if k in ("cost", "accuracy", "speed")]
+    if pool:
+        # Among qualifying models: the cheapest by default, or the best on the user's priorities.
+        bad = priority_badness(pool, pr) if pr else None
+        primary = min(pool, key=lambda r: (bad[r["id"]], r["monthly"])) if pr else pool[0]
+    elif pr:
+        # Nothing qualifies: keep the hallucination limit, miss as few targets as possible, then follow the priorities.
+        cand = live or tested
+        bad = priority_badness(cand, pr)
+        # If every model breaks the hallucination limit, the one that makes the fewest things up comes first.
+        primary = min(cand, key=lambda r: ("halluc" in r["failed"], (r["halluc"] or 0) if "halluc" in r["failed"] else 0,
+                                           len(r["failed"]), bad[r["id"]], r["monthly"]))
+    else:
+        # If nothing qualifies, the closest one must come from real measurements when there are any.
+        primary = max(live or tested, key=lambda r: (r["accuracy"] or 0, -(r["halluc"] or 0), -r["monthly"]))
     commit = spec and spec.get("commitment")
     if pool and commit and primary["platform"] != commit:
         on = [r for r in pool if r["platform"] == commit]
@@ -810,7 +833,13 @@ def rank_designs(spec, res, jev, mode=None, jev_blocked=False):
         d["_live_ok"] = len(live_ok)
         designs.append(d)
     score_designs(designs, spec)
-    designs.sort(key=lambda d: (not d["passes"], -d["score"]))
+    def order(d):
+        if d["passes"] or not spec.get("priorities"):
+            return (not d["passes"], 0, -d["score"])
+        # With priorities and nothing qualifying, the hallucination limit still comes first: fewer made-up answers win.
+        broke = any(c["key"] == "halluc" and not c["pass"] for c in d["checks"])
+        return (True, (d["halluc"] or 0) if broke else 0, -d["score"])
+    designs.sort(key=order)
     top = designs[:3]
     table = []
     if top:
@@ -832,7 +861,7 @@ def rank_designs(spec, res, jev, mode=None, jev_blocked=False):
         picks["fallback_retirement"] = next((r["retirement"] for r in table if r["id"] == first["models"]["fallback"]), None)
         if first["models"]["fallback"]:
             fbd = build_design(first["arch"], {**first["models"], "primary": first["models"]["fallback"]}, "fallback", res, jev, spec)
-            picks["fallback_design"] = {k: fbd[k] for k in ("accuracy", "right", "n", "halluc", "p95_ms", "monthly", "cost_per_req", "passes", "acc_lo", "acc_hi")}
+            picks["fallback_design"] = {k: fbd[k] for k in ("accuracy", "right", "n", "halluc", "p90_ms", "p95_ms", "monthly", "cost_per_req", "passes", "acc_lo", "acc_hi")}
     for d in designs:
         for k in ("_table", "_good", "_cheaper", "_live_ok", "_simq"):
             d.pop(k, None)
@@ -863,6 +892,7 @@ def robustness(spec, res, jev, mode, jev_blocked, base):
         (f"{name} costs 30% more", {}, {model: 1.3}),
         ("Without the production harness" if spec.get("harness") else "With a production harness",
          {"harness": not spec.get("harness")}, None),
+        ("If lowest cost came first", {"priorities": ["cost"]}, None) if not spec.get("priorities") else None,
         ("One model for every role" if spec["multi_model"] else "Allowing a different model per role",
          {"multi_model": not spec["multi_model"]}, None),
     ]
@@ -1050,7 +1080,7 @@ def system_design(d, spec):
             "retrieval": retrieval_plan(spec, d)}
 
 
-def harness_for(arch, models, res, rows, spec, raw=None, guard=None):
+def harness_for(arch, models, res, rows, spec, raw=None, guard=None, fresh=1.0):
     """The production controls around one architecture. Controls that call a model are priced from this run's
     measured results (retries at the measured failure rate) and a guard-model call sized to what that check
     reads: the guardrail reads the request, the grounding check the retrieved passages and the answer. The rest
@@ -1074,13 +1104,14 @@ def harness_for(arch, models, res, rows, spec, raw=None, guard=None):
         "input_guard": (True, guard_cost, small["p50_ms"] if tools else 0,
                         f"one {s_name} call per request reading only the request (~{round(A['guard_prompt_tokens'] + request):,} tokens), "
                         + ("finished before any action is taken" if tools else "run alongside the main call so it adds no wait")),
-        "output_check": (True, fail * main["cost_per_req"],
+        "output_check": (True, fresh * fail * main["cost_per_req"],
                          main["p50_ms"] if fail >= HARNESS["assumptions"]["retry_latency_threshold"] else 0,
                          f"retries the {round(fail * 100)}% of answers that failed in testing" if fail
                          else "no answer failed in testing, so retries add nothing measurable"),
-        "grounding": (spec["needs_documents"], check(grounding_in), small["p50_ms"],
+        "grounding": (spec["needs_documents"], fresh * check(grounding_in), small["p50_ms"],
                       f"one {s_name} call per answer reading the retrieved passages and the answer "
-                      f"(~{round(A['guard_prompt_tokens'] + grounding_in):,} tokens), before it is shown"),
+                      f"(~{round(A['guard_prompt_tokens'] + grounding_in):,} tokens), before it is shown"
+                      + (f"; skipped for the {round((1 - fresh) * 100)}% served from the response cache" if fresh < 1 else "")),
         "tool_gate": (tools, 0.0, 0, "approvals wait for a person, outside the request"),
         "mcp_governance": (spec["needs_tools"] and spec["integration"] != "direct", 0.0, 0, "configuration and review; no model cost"),
         "limits": (arch in LOOPING, 0.0, 0, "configuration in the agent runtime"),
@@ -1090,7 +1121,7 @@ def harness_for(arch, models, res, rows, spec, raw=None, guard=None):
         "regression": (True, 0.0, 0, f"re-runs the {n} test cases at the main model's price: "
                                       + (f"about {_usd(n * main['cost_per_req'])}" if n * main["cost_per_req"] >= 0.01 else "under a cent")
                                       + " per release"),
-        "live_eval": (True, sample * main["cost_per_req"], 0,
+        "live_eval": (True, fresh * sample * main["cost_per_req"], 0,
                       f"{round(sample * 100)}% of requests graded by a judge call about the size of the main call (assumption)"),
     }
     controls = []
@@ -1120,15 +1151,39 @@ def harness_advice(spec):
     return {"on": bool(spec.get("harness")), "recommended": bool(why), "reasons": why}
 
 
+def accuracy_floor(spec):
+    """The accuracy a design must reach: the target, or up to 5 points under it when the user put cost first."""
+    pr = spec.get("priorities") or []
+    return round(max(0.0, spec["accuracy_target"] - COST_FIRST_ACCURACY_SLACK), 4) if "cost" in pr and "accuracy" not in pr else spec["accuracy_target"]
+
+
+def priority_badness(rows, priorities):
+    """{id: 0..1, lower is better}: the average, over the chosen priorities, of where each row sits between the
+    best and worst of `rows` (cost and speed on a log scale, so one very expensive model doesn't flatten the rest)."""
+    keys = [k for k in priorities if k in ("cost", "accuracy", "speed")]
+    val = {"cost": lambda r: math.log(max(r["monthly"], 1e-9)), "speed": lambda r: math.log(max(r["p95_ms"] or 1, 1)),
+           "accuracy": lambda r: -(r["accuracy"] or 0)}
+    out = {r["id"]: 0.0 for r in rows}
+    for k in keys:
+        v = {r["id"]: val[k](r) for r in rows}
+        lo, hi = min(v.values()), max(v.values())
+        for i in out:
+            out[i] += ((v[i] - lo) / (hi - lo) if hi > lo else 0.0) / len(keys)
+    return out
+
+
 def checks(d, spec):
     out = []
     if d["accuracy"] is not None:
-        out.append({"key": "accuracy", "label": "Accuracy", "pass": d["accuracy"] >= spec["accuracy_target"],
-                    "value": d["accuracy"], "target": spec["accuracy_target"]})
+        target = accuracy_floor(spec)
+        out.append({"key": "accuracy", "label": "Accuracy", "pass": d["accuracy"] >= target - 1e-9,
+                    "value": d["accuracy"], "target": target})
+        if target < spec["accuracy_target"]:
+            out[-1]["relaxed_from"] = spec["accuracy_target"]
         out.append({"key": "halluc", "label": "Hallucinations", "pass": d["halluc"] <= spec["max_hallucination"],
                     "value": d["halluc"], "target": spec["max_hallucination"]})
     if out:  # sure = the whole 95% range clears the target, not just the point estimate
-        out[0]["sure"] = d["acc_lo"] is not None and d["acc_lo"] >= spec["accuracy_target"]
+        out[0]["sure"] = d["acc_lo"] is not None and d["acc_lo"] >= out[0]["target"]
         out[0]["lo"], out[0]["hi"] = d["acc_lo"], d["acc_hi"]
     out.append({"key": "latency", "label": "Latency p95", "pass": d["p95_ms"] <= spec["latency_budget_ms"],
                 "value": d["p95_ms"], "target": spec["latency_budget_ms"]})
@@ -1151,15 +1206,21 @@ def score_designs(designs, spec):
     if not designs:
         return
     w_cost, w_lat = (0.40, 0.0) if spec["latency"] == "background" else (0.25, 0.15)
+    w_acc, w_simple = 0.35, 0.25
+    pr = spec.get("priorities") or []  # each priority the user ticked counts about twice as much
+    w_cost += 0.35 * ("cost" in pr)
+    w_acc += 0.35 * ("accuracy" in pr)
+    w_lat += 0.30 * ("speed" in pr)
+    w_simple += 0.30 * ("simplicity" in pr)
     min_cost = min(d["total_monthly"] for d in designs) or 1e-9
     min_lat = min(d["p95_ms"] for d in designs) or 1
     for d in designs:
         acc = d["accuracy"] if d["accuracy"] is not None else 0.8
         hall_pen = min(1.0, (d["halluc"] or 0) * 5)
-        d["score"] = round(100 * (0.35 * acc * (1 - hall_pen * 0.5)
+        d["score"] = round(100 * (w_acc * acc * (1 - hall_pen * 0.5)
                                   + w_cost * min(1.0, min_cost / max(d["total_monthly"], 1e-9))
                                   + w_lat * min(1.0, min_lat / max(d["p95_ms"], 1))
-                                  + 0.25 * (6 - d["complexity"]) / 5), 1)
+                                  + w_simple * (6 - d["complexity"]) / 5), 1)
 
 
 def _pct(x):
@@ -1188,6 +1249,7 @@ def explain(top, spec, picks):
         return
     first = top[0]
     label = lambda m: catalog.MODEL_BY_ID[m]["label"] if m else "—"  # noqa: E731
+    pr = spec.get("priorities") or []
     reasons = []
     if first["passes"]:
         reasons.append(f"Meets all {len(first['checks'])} of your requirements.")
@@ -1229,9 +1291,19 @@ def explain(top, spec, picks):
         reasons.append(f"Prompt caching covers {round(first['cached_share'] * 100)}% of input tokens, priced at the cached rate.")
     if picks.get("committed"):
         reasons.append(f"Runs on {catalog.MODEL_BY_ID[first['models']['primary']]['platform']}, where you have a spend commitment.")
-    reasons.append(f"{label(first['models']['primary'])} is the cheapest model that meets every requirement in this architecture."
+    reasons.append((f"{label(first['models']['primary'])} meets every requirement in this architecture." if pr else
+                    f"{label(first['models']['primary'])} is the cheapest model that meets every requirement in this architecture.")
                    if first["models"]["primary"] in picks["qualifying"]
                    else f"{label(first['models']['primary'])} was the most accurate model tested, but none met every requirement.")
+    if pr:
+        names = " and ".join(PRIORITIES[k].lower() for k in pr)
+        reasons.append(f"You put {names} first: " + (
+            "among the models that meet your targets, this one is best for that" if first["models"]["primary"] in picks["qualifying"]
+            else "none met every target, so this is the best trade-off for that priority without breaking the hallucination limit"
+            if all(c["pass"] for c in first["checks"] if c["key"] == "halluc")
+            else "none met every target and none kept the hallucination limit, so this is the best trade-off for that priority")
+            + (f"; accuracy down to {_pct(accuracy_floor(spec))} (5 points under your {_pct(spec['accuracy_target'])} target) is accepted"
+               if accuracy_floor(spec) < spec["accuracy_target"] else "") + ".")
     c = picks.get("cheaper_option")
     if c:
         gap = (f"it met every requirement, but only in simulation, so it isn't recommended until it's measured live"
