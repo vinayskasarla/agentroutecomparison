@@ -1,17 +1,19 @@
-__pycache__/
-*.py[cod]
-.venv/
-venv/
-.env
-.env.*
-!.env.example
-dump.rdb
-.DS_Store
 
+!*.tfvars.example
+!.env.example
 # Terraform
 **/.terraform/*
+*.py[cod]
 *.tfstate
 *.tfstate.*
 *.tfvars
-!*.tfvars.example
+.DS_Store
+.coverage
+.env
+.env.*
+.pytest_cache/
+.venv/
+__pycache__/
 crash.log
+dump.rdb
+venv/

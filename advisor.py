@@ -35,7 +35,7 @@ def compare_estimate(res, eligible):
     return {"models": len(eligible), "cost": sum(per.values()), "largest": catalog.MODEL_BY_ID[top]["label"], "largest_cost": per[top]}
 
 
-def run_cost(arch_usage, res, mode, scope):
+def run_cost(arch_usage, res, mode, scope, judge_usage=None):
     """What this run cost, per action, from actual token usage. Simulated calls cost nothing; what they would
     have cost live is reported separately so the numbers can be projected."""
     steps = []
@@ -47,11 +47,21 @@ def run_cost(arch_usage, res, mode, scope):
                       "cost": (arch_usage["in"] * pin + arch_usage["out"] * pout) / 1e6})
     for m, rows in res.items():
         info = catalog.MODEL_BY_ID[m]
-        tin, tout = sum(r["in_tokens"] for r in rows), sum(r["out_tokens"] for r in rows)
+        fresh = [r for r in rows if not r.get("reused")]
+        if not fresh:  # every answer reused from earlier in this session: nothing new was spent
+            steps.append({"step": f"Test {info['label']} ({info['platform']})", "kind": "test", "model": m, "calls": 0,
+                          "in": 0, "out": 0, "live": mode.get(m) == "live", "reused": True, "cost": 0.0, "if_live": 0.0})
+            continue
+        tin, tout = sum(r["in_tokens"] for r in fresh), sum(r["out_tokens"] for r in fresh)
         priced = (tin * info["in"] + tout * info["out"]) / 1e6
         live = mode.get(m) == "live"
-        steps.append({"step": f"Test {info['label']} ({info['platform']})", "kind": "test", "model": m, "calls": len(rows),
-                      "in": tin, "out": tout, "live": live, "cost": priced if live else 0.0, "if_live": priced})
+        steps.append({"step": f"Test {info['label']} ({info['platform']})", "kind": "test", "model": m, "calls": len(fresh),
+                      "in": tin, "out": tout, "live": live, "cost": priced if live else 0.0, "if_live": priced,
+                      "reused_calls": len(rows) - len(fresh)})
+    if judge_usage:
+        jin, jout = sum(u["in"] for u in judge_usage), sum(u["out"] for u in judge_usage)
+        steps.append({"step": "Grade free-text answers (judge)", "kind": "judge", "model": "claude-haiku-4-5", "calls": len(judge_usage),
+                      "in": jin, "out": jout, "live": True, "cost": (jin * 1.0 + jout * 5.0) / 1e6})
     steps.sort(key=lambda x: -(x["cost"] or x.get("if_live", 0)))
     total = sum(x["cost"] for x in steps)
     projected = sum(x["cost"] if x["live"] else x.get("if_live", 0) for x in steps)

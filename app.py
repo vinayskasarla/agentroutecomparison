@@ -27,6 +27,7 @@ from pydantic import BaseModel
 import catalog
 import advisor
 import constraints
+import grading
 import audit
 from pii import redact
 import news
@@ -401,8 +402,7 @@ async def run_jev_path(path_id, model, prompt, ctx):
 
 
 def grade(answer, accept):
-    ans = (answer or "").lower()
-    return any(re.search(r"(?<![\w.])" + re.escape(a.lower()) + r"(?![\w])", ans) for a in accept)
+    return grading.grade(answer, accept)
 
 
 def hallucinated(item, answer, confidence, correct):
@@ -412,7 +412,7 @@ def hallucinated(item, answer, confidence, correct):
         return None if correct is None else False
     if item.get("unanswerable"):
         return True
-    if item.get("options") and not grade(answer, item["options"]):
+    if item.get("options") and grading.first_label(answer, item["options"]) is None:
         return True
     return confidence is not None and confidence >= 70
 
@@ -571,6 +571,31 @@ def _advice_key(req, session_id=None):
     return hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()[:32]
 
 
+# Stability within a browser session: the same goal keeps the same spec and test cases, and a model's answer to
+# a test case is measured once and reused (toggles, what-ifs and the full comparison re-rank the same evidence).
+_spec_pins: "collections.OrderedDict[str, dict]" = collections.OrderedDict()
+_measured: "collections.OrderedDict[str, dict]" = collections.OrderedDict()
+
+
+def _pin_key(session_id, goal, force_sim):
+    return hashlib.sha256(json.dumps([session_id, " ".join(goal.lower().split()), force_sim]).encode()).hexdigest()
+
+
+def _lru_put(store, key, value, limit):
+    store[key] = {"at": time.time(), "v": value}
+    store.move_to_end(key)
+    while len(store) > limit:
+        store.popitem(last=False)
+
+
+def _lru_get(store, key):
+    hit = store.get(key)
+    if hit and time.time() - hit["at"] < ADVICE_TTL:
+        return hit["v"]
+    store.pop(key, None)
+    return None
+
+
 # Full model comparisons are limited per client IP in a rolling 24 hours (in memory; a restart resets it).
 COMPARE_LIMIT = int(os.environ.get("COMPARE_LIMIT_PER_DAY", 5))
 TRUSTED_PROXY_HOPS = int(os.environ.get("TRUSTED_PROXY_HOPS", 1))  # App Runner's load balancer appends the real client IP
@@ -651,8 +676,12 @@ async def api_advise(req: AdviseReq, request: Request):
     async def work():
         await queue.put({"type": "stage", "stage": "understand"})
         note = None
+        pin = _pin_key(request.state.session_id, req.goal, req.force_sim) if req.goal and not req.spec else None
+        pinned = _lru_get(_spec_pins, pin) if pin else None
         if req.spec:
             spec, source = req.spec, "edited"
+        elif pinned:  # same goal earlier in this browser session: same spec and test cases, no new architect call
+            spec, source = json.loads(json.dumps(pinned)), "pinned"
         elif advisor.claude_available() and not req.force_sim:
             try:
                 spec, source = await advisor.spec_from_claude(req.goal), "claude"
@@ -662,11 +691,15 @@ async def api_advise(req: AdviseReq, request: Request):
         else:
             spec, source = advisor.spec_from_rules(req.goal), "rules"
         arch_usage = spec.pop("_usage", None) if isinstance(spec, dict) else None
+        if pin and not pinned:
+            _lru_put(_spec_pins, pin, spec, 2000)
         spec = {**spec, **{k: v for k, v in (req.constraints or {}).items() if k in CONSTRAINT_KEYS and v not in (None, "")}}
         spec = advisor.finalize_spec({**spec, "multi_model": req.multi_model})
         spec["harness"] = req.harness
         items = normalize_items(advisor.items_for(spec))
-        confirm = advisor.cross_check(spec, req.goal) if source == "claude" and req.goal else []
+        confirm = advisor.cross_check(spec, req.goal) if source in ("claude", "pinned") and req.goal else []
+        use_judge = grading.judge_allowed(spec) and not req.force_sim
+        judge_usage = []
         spec_event = {"type": "spec", "spec": spec, "source": "compare" if req.compare else source, "note": note, "confirm": confirm,
                       "architect_model": advisor.ARCHITECT_MODEL if source == "claude" else None}
         await queue.put(spec_event)
@@ -692,16 +725,37 @@ async def api_advise(req: AdviseReq, request: Request):
         sem, done = asyncio.Semaphore(8), [0]
 
         async def one_llm(model, item, force_sim=req.force_sim):
+            mkey = hashlib.sha256(json.dumps([request.state.session_id, model, item["q"], item.get("accept"), force_sim]).encode()).hexdigest()
+            prior = _lru_get(_measured, mkey)
+            if prior:  # measured earlier in this session: reuse it, so re-runs rank the same evidence
+                done[0] += 1
+                await queue.put({"type": "progress", "done": done[0], "total": total})
+                return {**prior, "reused": True}
             async with sem:
                 r = await call_llm(model, item["q"], item=item if item.get("accept") else None, force_sim=force_sim)
-            correct = grade(r["answer"], item["accept"]) if item.get("accept") and not r["error"] else (
-                False if item.get("accept") else None)
+            correct, method = (None, None)
+            if item.get("accept"):
+                if r["error"]:
+                    correct, method = False, "error"
+                else:
+                    correct, method, needs_judge = grading.grade_item(r["answer"], item)
+                    if needs_judge and use_judge and not r["simulated"]:
+                        try:
+                            correct, usage = await grading.judge(item["input"], item["accept"], r["answer"])
+                            method = "judge"
+                            if usage:
+                                judge_usage.append(usage)
+                        except Exception:  # keep the keyword grade if the judge is unavailable
+                            pass
             done[0] += 1
             await queue.put({"type": "progress", "done": done[0], "total": total})
-            return {"answer": r["answer"], "confidence": r["confidence"], "correct": correct,
-                    "hallucinated": hallucinated(item, r["answer"], r["confidence"], correct) if not r["error"] else False,
-                    "in_tokens": r["in_tokens"], "out_tokens": r["out_tokens"], "latency_ms": r["llm_ms"],
-                    "error": r["error"], "simulated": r["simulated"]}
+            row = {"answer": r["answer"], "confidence": r["confidence"], "correct": correct, "graded_by": method,
+                   "hallucinated": hallucinated(item, r["answer"], r["confidence"], correct) if not r["error"] else False,
+                   "in_tokens": r["in_tokens"], "out_tokens": r["out_tokens"], "latency_ms": r["llm_ms"],
+                   "error": r["error"], "simulated": r["simulated"]}
+            if not r["error"]:
+                _lru_put(_measured, mkey, row, 50000)
+            return row
 
         async def one_jev(item):
             async with sem:
@@ -731,7 +785,12 @@ async def api_advise(req: AdviseReq, request: Request):
         await queue.put({"type": "stage", "stage": "rank"})
         result = advisor.rank_designs(spec, res, jev, mode, jev_blocked=jev_blocked)
         result["harness"] = advisor.harness_advice(spec)
-        result["run_cost"] = advisor.run_cost(arch_usage, res, mode, "full" if req.compare else "shortlist")
+        result["run_cost"] = advisor.run_cost(arch_usage, res, mode, "full" if req.compare else "shortlist", judge_usage)
+        graded = [r.get("graded_by") for rs in res.values() for r in rs if r.get("graded_by")]
+        result["grading"] = {m: graded.count(m) for m in ("exact", "keyword", "judge", "error") if graded.count(m)}
+        result["grading"]["judge_on"] = use_judge
+        result["stability"] = {"spec": source, "reused": sum(1 for rs in res.values() for r in rs if r.get("reused")),
+                               "measured": sum(len(rs) for rs in res.values())}
         if not req.compare:
             result["run_cost"]["compare_estimate"] = advisor.compare_estimate(res, all_eligible)
         result["robustness"] = advisor.robustness(spec, res, jev, mode, jev_blocked, result)
@@ -761,7 +820,7 @@ async def api_advise(req: AdviseReq, request: Request):
                          "simulated": any(v == "simulated" for v in mode.values()), "mode": mode,
                          "live_count": sum(v == "live" for v in mode.values()),
                          "cases": [{"input": c["input"], "expected": c["expected"]} for c in spec["test_cases"]],
-                         "per_case": {m: [{k: r[k] for k in ("answer", "correct", "hallucinated", "latency_ms")} for r in rs]
+                         "per_case": {m: [{k: r.get(k) for k in ("answer", "correct", "hallucinated", "latency_ms", "graded_by")} for r in rs]
                                       for m, rs in res.items()},
                          "jev_per_case": [{k: r[k] for k in ("answer", "correct", "confidence")} for r in jev] if jev else None}
         _cache_put(key, spec_event, advice)
