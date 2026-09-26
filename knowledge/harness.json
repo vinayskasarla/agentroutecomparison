@@ -4,7 +4,10 @@
   "assumptions": {
     "live_eval_sample_rate": 0.02,
     "live_eval_note": "Share of live traffic graded by a judge call. 2% is a starting point, not a standard; raise it for high-impact agents.",
-    "retry_latency_threshold": 0.05
+    "retry_latency_threshold": 0.05,
+    "guard_model_note": "Input guardrail and grounding check run on the cheapest small model measured this run (the main model when multi-model is off or it is already the cheapest). They see only what they need: the guard reads the request, the grounding check reads the retrieved passages and the answer, not the whole agent prompt.",
+    "guard_prompt_tokens": 400,
+    "guard_output_tokens": 20
   },
   "layers": {
     "input": "Before the model",

@@ -82,3 +82,31 @@ def test_wilson_range():
     lo, hi = constraints.wilson(12, 12)
     assert 0.7 < lo < 0.8 and hi == 1.0
     assert constraints.wilson(0, 0) == (None, None)
+
+
+def test_guard_checks_read_only_what_they_need():
+    """Found live: the input guardrail and grounding check were priced as a full copy of the agent's prompt, so
+    the harness was 2/3 of a RAG design's cost. The guard reads the request; grounding the passages and answer."""
+    spec = make_spec("Answer customer questions from our help center docs. 20k a day.", harness=True)
+    res = make_res({"claude-sonnet-5": 12, "claude-haiku-4-5": 12})
+    models = {"primary": "claude-sonnet-5", "small": "claude-haiku-4-5", "guard": "claude-haiku-4-5", "fallback": None}
+    lean = advisor.build_design("rag", models, "x", res, None, spec)
+    heavy = advisor.build_design("rag", models, "x", res, None, {**spec, "system_prompt_tokens": 20000})
+    guard = lambda d: next(c for c in d["harness"]["controls"] if c["id"] == "input_guard")["cost_per_req"]  # noqa: E731
+    assert guard(lean) == guard(heavy)  # the agent's own system prompt doesn't reach the guard
+    haiku = catalog.MODEL_BY_ID["claude-haiku-4-5"]
+    grounding = next(c for c in lean["harness"]["controls"] if c["id"] == "grounding")["cost_per_req"]
+    assert grounding < advisor._cost({"in_tokens": spec["context_tokens"] + 2000, "out_tokens": 100}, haiku)
+    assert lean["harness"]["monthly"] < lean["monthly"] - lean["harness"]["monthly"]  # controls cost less than the model
+
+
+def test_guard_model_is_the_same_for_the_table_and_the_winner():
+    """Found live: the table priced Sonnet 5's controls on a simulated cheap model, the winner card on Haiku 4.5,
+    so the same model showed $2,958 in the table and $6,542 on the card."""
+    spec = make_spec("Answer customer questions from our help center docs. 20k a day.", harness=True)
+    res = make_res({"claude-sonnet-5": 12, "claude-haiku-4-5": 10, "bedrock-gpt-oss-120b": (12, {"simulated": True})})
+    mode = {"claude-sonnet-5": "live", "claude-haiku-4-5": "live", "bedrock-gpt-oss-120b": "simulated"}
+    r = advisor.rank_designs(spec, res, None, mode)
+    first = r["top"][0]
+    row = next(x for x in r["model_table"] if x["id"] == first["models"]["primary"])
+    assert abs(row["monthly"] - first["monthly"]) < 1e-9

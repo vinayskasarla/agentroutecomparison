@@ -467,6 +467,7 @@ button.primary.big { font-size: 15.5px; padding: 11px 20px; }
 .ans-main { font-size: 17px; line-height: 1.5; }
 .ans-k { font-size: 12.5px; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
 .ans-main { margin: 0; }
+.ans-alt { margin: 8px 0 0; padding: 8px 12px; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--border); font-size: 14.5px; line-height: 1.5; color: var(--ink-2); }
 .ans-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .badge2 { font-size: 12.5px; padding: 3px 10px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); color: var(--ink-2); }
 .rtabs { display: flex; gap: 4px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 22px 0 12px; border-bottom: 1px solid var(--border); }

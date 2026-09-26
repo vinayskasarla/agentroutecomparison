@@ -84,3 +84,15 @@ def test_supporting_roles_use_live_models_when_any_exist():
     for d in r["all"]:
         for role in ("primary", "small"):
             assert mode[d["models"][role]] == "live", (d["arch"], role, d["models"][role])
+
+
+def test_cheaper_option_is_shown_with_what_it_gives_up():
+    """A VP asked why the $10.9k design won over a $1.7k one: the page must name the cheaper model and why not."""
+    spec = make_spec("Answer customer questions from our help center docs. 20k a day.", accuracy_target=0.9)
+    res = make_res({"claude-sonnet-5": 12, "claude-haiku-4-5": 12, "bedrock-gpt-oss-120b": 9})
+    mode = {"claude-sonnet-5": "live", "claude-haiku-4-5": "live", "bedrock-gpt-oss-120b": "simulated"}
+    r = advisor.rank_designs(spec, res, None, mode)
+    c = r["models"]["cheaper_option"]
+    assert c and c["monthly"] < r["top"][0]["monthly"] and c["saves"] > 0
+    if not c["meets"]:
+        assert "accuracy" in c["failed"] and any("Why not the cheaper" in w for w in r["top"][0]["why"])

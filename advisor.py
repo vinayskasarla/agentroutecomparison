@@ -644,7 +644,13 @@ def build_design(arch, models, variant, res, jev, spec):
         own = lambda m: _agg(_direct_rows(res, m))["cost_per_req"]  # noqa: E731
         if own(models["small"]) >= own(models["primary"]):  # a "small" role only makes sense if it's cheaper
             models = {**models, "small": models["primary"]}
-    res = constraints.inflate(res, spec, arch, list(models.values()))
+    # The guardrail/grounding model is fixed per run (not per row) so the table and the winner card price the
+    # same model the same way; it's used only if it's cheaper than the main model.
+    raw = res
+    guard = (models.get("guard") or models.get("small")) if spec["multi_model"] else models["primary"]
+    if guard not in res or _agg(_direct_rows(res, guard))["cost_per_req"] >= _agg(_direct_rows(res, models["primary"]))["cost_per_req"]:
+        guard = models["primary"]
+    res = constraints.inflate(res, spec, arch, list(models.values()) + [guard])
     rows, evidence = compose(arch, models, res, jev, spec)
     m = _agg(rows)
     addons = addons_for(arch, spec)
@@ -653,7 +659,7 @@ def build_design(arch, models, variant, res, jev, spec):
     per_req = m["cost_per_req"] * (1 - spec["repeat_rate"] if cache else 1) + infra
     p95 = m["p95_ms"] + sum(a["ms"] for a in addons)
     per_req += constraints.embedding_cost_per_req(arch, spec)
-    harness = harness_for(arch, models, res, rows, spec) if spec.get("harness") else None
+    harness = harness_for(arch, models, res, rows, spec, raw, guard) if spec.get("harness") else None
     if harness:
         per_req += harness["cost_per_req"]
         p95 += harness["ms"]
@@ -759,6 +765,18 @@ def cheaper_unverified(table, primary_id):
     return None
 
 
+def cheaper_option(table, prim, share=0.7):
+    """The best tested model costing at most 70% of the winner in the same architecture, so the page always shows
+    what a cheaper choice would give up (a lower target, a simulated-only result) instead of hiding it."""
+    rows = [r for r in table if r["tested"] and r["id"] != prim["id"] and r["monthly"] <= prim["monthly"] * share]
+    if not rows:
+        return None
+    r = min(rows, key=lambda r: (not r["meets"], r["mode"] != "live", -(r["accuracy"] or 0), r["monthly"]))
+    return {"id": r["id"], "label": r["label"], "platform": r["platform"], "monthly": r["monthly"], "mode": r["mode"],
+            "saves": prim["monthly"] - r["monthly"], "accuracy": r["accuracy"], "halluc": r["halluc"],
+            "acc_lo": r["acc_lo"], "acc_hi": r["acc_hi"], "meets": r["meets"], "failed": r["failed"]}
+
+
 def rank_designs(spec, res, jev, mode=None, jev_blocked=False):
     """For every architecture that fits: price every model inside it, pick its best model and fallback,
     check it against the requirements; then rank the architectures and return the top 3 with reasons."""
@@ -773,7 +791,8 @@ def rank_designs(spec, res, jev, mode=None, jev_blocked=False):
     designs = []
     for arch in ok:
         cascade = arch in ("cascade", "rag_cascade")
-        base = {"primary": picks["best_large"] if cascade else picks["primary"], "small": picks["small"], "fallback": None}
+        base = {"primary": picks["best_large"] if cascade else picks["primary"], "small": picks["small"], "fallback": None,
+                "guard": picks["small"]}
         probe = build_design(arch, base, "probe", res, jev, spec)
         table = model_table(probe, spec, res, jev, picks, mode)
         if cascade:  # the escalation model has to be a bigger model than the small one
@@ -807,6 +826,7 @@ def rank_designs(spec, res, jev, mode=None, jev_blocked=False):
                                 for r in table if r["tested"] and not r["meets"] and r["monthly"] < prim["monthly"]
                                 and set(r["failed"]) <= {"accuracy", "halluc"} and "accuracy" in r["failed"]
                                 and (r["acc_hi"] or 0) >= spec["accuracy_target"]][:5]
+        picks["cheaper_option"] = cheaper_option(table, prim)
         picks["committed"] = bool(spec["commitment"] and prim["platform"] == spec["commitment"])
         picks["retirement"] = prim["retirement"]
         picks["fallback_retirement"] = next((r["retirement"] for r in table if r["id"] == first["models"]["fallback"]), None)
@@ -1030,28 +1050,37 @@ def system_design(d, spec):
             "retrieval": retrieval_plan(spec, d)}
 
 
-def harness_for(arch, models, res, rows, spec):
+def harness_for(arch, models, res, rows, spec, raw=None, guard=None):
     """The production controls around one architecture. Controls that call a model are priced from this run's
-    measured results (a small-model call per request, retries at the measured failure rate); the rest add no
-    model cost. Every figure carries the basis it was worked out from."""
+    measured results (retries at the measured failure rate) and a guard-model call sized to what that check
+    reads: the guardrail reads the request, the grounding check the retrieved passages and the answer. The rest
+    add no model cost. Every figure carries the basis it was worked out from."""
+    raw = raw or res
     main = _agg(_direct_rows(res, models["primary"]))
-    small_id = models.get("small") if models.get("small") in res else models["primary"]
-    small = _agg(_direct_rows(res, small_id))
+    small_id = guard if guard in raw else (models.get("small") if models.get("small") in raw else models["primary"])
+    small = _agg(_direct_rows(raw, small_id))
     s_name = catalog.MODEL_BY_ID[small_id]["label"]
+    price, A = catalog.MODEL_BY_ID[small_id], HARNESS["assumptions"]
+    request = statistics.fmean(r["in_tokens"] for r in raw[small_id]) if raw[small_id] else 0
+    answer = spec["output_tokens"] or (statistics.fmean(r["out_tokens"] for r in raw[models["primary"]]) if raw.get(models["primary"]) else 300)
+    check = lambda tokens_in: _cost({"in_tokens": A["guard_prompt_tokens"] + tokens_in, "out_tokens": A["guard_output_tokens"]}, price)  # noqa: E731
+    guard_cost = check(request)
+    grounding_in = request + (spec["context_tokens"] or 0) + answer
     tools = spec["needs_tools"] or arch in ("tool_agent", "multi_agent")
     fail = (sum(1 for r in rows if r.get("error")) / len(rows)) if rows else 0.0
     sample = HARNESS["assumptions"]["live_eval_sample_rate"]
     n = len(rows)
     plan = {
-        "input_guard": (True, small["cost_per_req"], small["p50_ms"] if tools else 0,
-                        f"one {s_name} call per request, " + ("finished before any action is taken" if tools
-                                                              else "run alongside the main call so it adds no wait")),
+        "input_guard": (True, guard_cost, small["p50_ms"] if tools else 0,
+                        f"one {s_name} call per request reading only the request (~{round(A['guard_prompt_tokens'] + request):,} tokens), "
+                        + ("finished before any action is taken" if tools else "run alongside the main call so it adds no wait")),
         "output_check": (True, fail * main["cost_per_req"],
                          main["p50_ms"] if fail >= HARNESS["assumptions"]["retry_latency_threshold"] else 0,
                          f"retries the {round(fail * 100)}% of answers that failed in testing" if fail
                          else "no answer failed in testing, so retries add nothing measurable"),
-        "grounding": (spec["needs_documents"], small["cost_per_req"], small["p50_ms"],
-                      f"one {s_name} call per answer, before it is shown"),
+        "grounding": (spec["needs_documents"], check(grounding_in), small["p50_ms"],
+                      f"one {s_name} call per answer reading the retrieved passages and the answer "
+                      f"(~{round(A['guard_prompt_tokens'] + grounding_in):,} tokens), before it is shown"),
         "tool_gate": (tools, 0.0, 0, "approvals wait for a person, outside the request"),
         "mcp_governance": (spec["needs_tools"] and spec["integration"] != "direct", 0.0, 0, "configuration and review; no model cost"),
         "limits": (arch in LOOPING, 0.0, 0, "configuration in the agent runtime"),
@@ -1149,6 +1178,10 @@ def _usd(x):
     return f"${x:,.0f}" if x >= 100 else f"${x:,.2f}"
 
 
+CHECK_NAMES = {"accuracy": "the accuracy target", "halluc": "the hallucination limit", "latency": "the speed target",
+               "cost": "the budget", "context": "the context size", "quota": "the peak-load quota"}
+
+
 def explain(top, spec, picks):
     """Why #1 wins, and what #2/#3 trade against it."""
     if not top:
@@ -1199,6 +1232,17 @@ def explain(top, spec, picks):
     reasons.append(f"{label(first['models']['primary'])} is the cheapest model that meets every requirement in this architecture."
                    if first["models"]["primary"] in picks["qualifying"]
                    else f"{label(first['models']['primary'])} was the most accurate model tested, but none met every requirement.")
+    c = picks.get("cheaper_option")
+    if c:
+        gap = (f"it met every requirement, but only in simulation, so it isn't recommended until it's measured live"
+               if c["meets"] and c["mode"] != "live" else
+               f"it met every requirement too" if c["meets"] else
+               f"it misses {' and '.join(CHECK_NAMES.get(k, k) for k in c['failed'])} ({_pct(c['accuracy'])} accurate"
+               + (f", hallucinations {_pct(c['halluc'])}" if c["halluc"] else "") + ")"
+               + ("" if c["mode"] == "live" else " and was simulated, not measured live"))
+        reasons.append(f"Why not the cheaper {c['label']} ({_usd(c['monthly'])}/month, saves {_usd(c['saves'])})? {gap[0].upper() + gap[1:]}."
+                       + ("" if c["meets"] else " If that is acceptable, lower the target under Adjust"
+                          + (" and it can become the pick." if c["mode"] == "live" else " and add its vendor's key so it can be measured live.")))
     first["why"] = reasons
     for d in top[1:]:
         t = []

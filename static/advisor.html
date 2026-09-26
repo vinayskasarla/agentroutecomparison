@@ -529,8 +529,15 @@ function renderAnswer() {
   if (ADV.cached_at || stab.spec === "pinned" || stab.reused) badges.push(`<span class="badge2" data-tip="Within one browser session the same goal keeps the same test cases and each model's measured answers, so the recommendation doesn't drift between runs.">⟲ Same test cases as earlier in this session</span>`);
   if (g.judge) badges.push(`<span class="badge2" data-tip="Free-text answers the keyword check couldn't confirm were checked by a judge model for meaning.">⚖ ${g.judge} answers checked by a judge</span>`);
   if (ADV.scope === "shortlist") badges.push(`<span class="badge2" data-tip="Only a shortlist of models was tested. Use Compare all models in the All models tab to test every one.">${ADV.evaluated_models.length} of ${ADV.eligible_models} models tested</span>`);
+  const split = d.harness && d.harness.monthly >= 1 ? ` (${fmt$(d.monthly - d.harness.monthly)} model calls + ${fmt$(d.harness.monthly)} production controls)` : "";
+  const c = p.cheaper_option, gave = c ? (c.failed || []).map((k) => ({ accuracy: "accuracy target", halluc: "hallucination limit", latency: "speed target", cost: "budget" }[k] || k)) : [];
+  const alt = !c ? "" : `<p class="ans-alt">💡 <b>Cheaper option:</b> <b>${esc(c.label)}</b> on ${esc(c.platform)} at <b>${fmt$(c.monthly)}/month</b> (saves ${fmt$(c.saves)}), ${pct(c.accuracy)} accurate${c.halluc ? `, hallucinations ${pct(c.halluc)}` : ""}. `
+    + (c.meets && c.mode !== "live" ? `It met every requirement <b>in simulation only</b>; add its vendor's key and re-run to confirm before choosing it.`
+      : c.meets ? "It also meets every requirement."
+      : `Not recommended because it misses the <b>${esc(gave.join(" and "))}</b>${c.mode !== "live" ? " and was simulated, not measured live" : ""}. If that's acceptable, lower the target under Adjust.`) + `</p>`;
   $("#answer").innerHTML = `<div class="ans-k">Recommendation for “${esc(SPEC.summary)}”</div>
-    <p class="ans-main">Build a <b>${esc(d.name)}</b> on <b>${esc(modelName(p.primary))}</b>${p.fallback ? `, with <b>${esc(modelName(p.fallback))}</b> as the fallback` : ""}. About <b>${fmt$(d.monthly)}/month</b>${acc}. ${d.passes ? "Meets every requirement." : `Closest option: misses ${esc(miss.join(", "))}.`}</p>
+    <p class="ans-main">Build a <b>${esc(d.name)}</b> on <b>${esc(modelName(p.primary))}</b>${p.fallback ? `, with <b>${esc(modelName(p.fallback))}</b> as the fallback` : ""}. About <b>${fmt$(d.monthly)}/month</b>${split}${acc}. ${d.passes ? "Meets every requirement." : `Closest option: misses ${esc(miss.join(", "))}.`}</p>
+    ${alt}
     <div class="ans-badges">${badges.join("")}</div>`;
 }
 function reqChips(d) {
