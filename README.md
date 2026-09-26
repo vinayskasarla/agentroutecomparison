@@ -199,6 +199,30 @@ The advisor picks the pattern from the shape of the goal, and shows the reasonin
 
 Rules, thresholds and defaults live in `knowledge/agentic.json`. Each cites its source, and the thresholds are this tool's defaults, not vendor limits.
 
+## Stable answers, grading and tests
+
+**Same session, same goal, same answer.** Within one browser session:
+- a goal keeps the spec and test cases it was first given, so there's no new architect call;
+- each model's answer to each test case is measured once and reused.
+
+Changing options (production controls, mixing models), the what-ifs and the full comparison all re-rank the same evidence, so the recommendation doesn't drift. A new browser session starts fresh.
+
+**Grading** (`grading.py`), cheapest method first. Every grade records which method decided it:
+
+| Method | How it decides |
+|---|---|
+| **By label** | For fixed answers, the first label the answer names is its choice. Hedging ("technical, maybe billing") earns no credit. |
+| **By key phrase** | Normalised matching that ignores case, markdown, punctuation and number or currency formats. Declines are recognised in many phrasings ("not covered", "the documents don't mention…"). |
+| **By a judge model** | Free-text answers the key-phrase check can't confirm go to Claude Haiku 4.5 at temperature 0, with a fixed rubric, cached per answer. It runs only where the data rules allow Anthropic, and its cost appears in the run's cost breakdown. |
+
+**Tests.** `pip install -r requirements-dev.txt && python -m pytest`. The 59 tests run offline in about 2 seconds and cover:
+- pattern rules, model choice (including the three bugs found in live runs) and ranking determinism;
+- costs and caching, policy and data rules, grading;
+- the API: sessions, stability, comparison limits, password gate;
+- the benchmark route, news and audit.
+
+GitHub Actions runs them on every push with a coverage floor. Set the `LIVE_ANTHROPIC_API_KEY` secret to also run the live API check.
+
 ## Beyond accuracy: what else decides the answer
 
 | Question an architect asks | How the advisor handles it | Where to change it |

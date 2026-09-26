@@ -59,4 +59,4 @@ def test_judge_is_deterministic_and_cached(monkeypatch):
     v1, u1 = asyncio.run(grading.judge("q", ["full refund"], "all your money back"))
     v2, u2 = asyncio.run(grading.judge("q", ["full refund"], "All your money back!"))
     assert v1 is True and v2 is True and u1 and u2 is None  # second answer normalises to the same -> cached
-    assert len(calls) == 1 and calls[0]["temperature"] == 0 and calls[0]["model"] == grading.JUDGE_MODEL
+    assert len(calls) == 1 and calls[0]["extra_body"] == {"temperature": 0} and calls[0]["model"] == grading.JUDGE_MODEL

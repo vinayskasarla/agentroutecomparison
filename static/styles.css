@@ -453,3 +453,28 @@ ul.trace li { border: 1px solid var(--border); border-radius: 10px; padding: 10p
 .cval { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
 .cpct { text-align: right; font-variant-numeric: tabular-nums; }
 @media (max-width: 700px) { .costlist li { grid-template-columns: 1fr 70px 40px; } .costlist .cbarwrap { grid-column: 1 / -1; order: 5; } }
+
+/* answer-first layout */
+.biglabel { display: block; font-size: 17px; font-weight: 650; margin: 0 0 8px; }
+button.primary.big { font-size: 15.5px; padding: 11px 20px; }
+.opts { display: flex; flex-wrap: wrap; gap: 8px; }
+.opt { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--border); border-radius: 10px; padding: 6px 12px 6px 10px; cursor: pointer; background: var(--surface); }
+.opt:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, var(--surface)); }
+.opt span { display: flex; flex-direction: column; line-height: 1.2; }
+.opt b { font-size: 13.5px; }
+.opt small { font-size: 11.5px; color: var(--muted); }
+.tldr { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; margin: 0 0 14px; }
+.ans-main { font-size: 17px; line-height: 1.5; }
+.ans-k { font-size: 12.5px; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
+.ans-main { margin: 0; }
+.ans-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.badge2 { font-size: 12.5px; padding: 3px 10px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); color: var(--ink-2); }
+.rtabs { display: flex; gap: 4px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 22px 0 12px; border-bottom: 1px solid var(--border); }
+.rtabs button { background: none; border: 0; border-bottom: 2.5px solid transparent; padding: 10px 14px; font-weight: 600; font-size: 14.5px; color: var(--ink-2); white-space: nowrap; }
+.rtabs button.on { color: var(--ink); border-bottom-color: var(--accent); }
+.rtabs button:hover { color: var(--ink); }
+.tabpanel.hidden { display: none; }
+@media (max-width: 600px) { .ans-main { font-size: 15.5px; } .rtabs button { padding: 9px 10px; font-size: 13.5px; } .opt { flex: 1 1 100%; } }
+
+#stepper.hidden, #progressWrap.hidden { display: none; }
+@media (max-width: 600px) { .tile .ts, .tile .tk { white-space: normal; overflow: visible; text-overflow: clip; } }

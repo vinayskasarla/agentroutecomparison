@@ -113,8 +113,11 @@ async def judge(question, expected, answer):
     if key in _verdicts:
         return _verdicts[key], None
     client = anthropic.AsyncAnthropic()
+    # Temperature 0 for repeatable verdicts. SDK 1.x takes sampling settings only via extra_body, and only
+    # models before Opus 4.7 (such as Haiku 4.5) accept them, so it's sent just for those.
+    sampling = {"extra_body": {"temperature": 0}} if JUDGE_MODEL.startswith("claude-haiku-4-5") else {}
     r = await client.messages.create(
-        model=JUDGE_MODEL, max_tokens=300, temperature=0,
+        model=JUDGE_MODEL, max_tokens=300, **sampling,
         output_config={"format": {"type": "json_schema", "schema": JUDGE_SCHEMA}},
         messages=[{"role": "user", "content": JUDGE_PROMPT.format(q=question[:4000], e=" | ".join(expected), a=(answer or "")[:4000])}])
     verdict = bool(json.loads(next(b.text for b in r.content if b.type == "text"))["same_meaning"])

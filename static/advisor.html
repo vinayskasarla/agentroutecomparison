@@ -50,19 +50,41 @@
   </section>
 
   <section class="card goalcard">
-    <textarea id="goal" class="askbox" placeholder="What should your agent do? e.g. Route every support ticket to billing, technical, account or sales. About 50k a day, in real time."></textarea>
+    <label class="biglabel" for="goal">What should your agent do?</label>
+    <textarea id="goal" class="askbox" placeholder="Describe it in a sentence or two, e.g. Route every support ticket to billing, technical, account or sales. About 50k a day, in real time."></textarea>
     <div class="examples" id="examples"></div>
     <div class="runrow">
-      <button class="primary" id="go">Get architecture advice</button>
-      <label class="check" style="margin:0" data-tip="Wrap every suggested architecture in the controls it needs in production (guardrails, output checks, limits, failover, tracing, evaluation) and include their cost and latency in the numbers and the ranking."><input type="checkbox" id="harness"> <span>Production harness</span></label>
-      <label class="check" style="margin:0" data-tip="Allow a different model per role: a small model routes, checks or handles simple requests; a stronger one decides. Untick to use one model everywhere (simpler to run and fail over)."><input type="checkbox" id="multiModel" checked> <span>Multi-model</span></label>
-      <label class="check" style="margin:0"><input type="checkbox" id="forceSim"> <span>Simulate (no API spend)</span></label>
+      <button class="primary big" id="go">Get recommendation</button>
+      <div class="opts">
+        <label class="opt" data-tip="Adds the safety and quality controls a production agent needs (guardrails, output checks, limits, failover, tracing, evaluation) and includes their cost and delay in every number."><input type="checkbox" id="harness"> <span><b>Production-ready</b><small>include guardrails &amp; monitoring</small></span></label>
+        <label class="opt" data-tip="Lets a cheaper model handle simple steps (routing, checking) while a stronger one decides. Untick to use one model everywhere, which is simpler to run."><input type="checkbox" id="multiModel" checked> <span><b>Mix models</b><small>cheaper model where it's enough</small></span></label>
+        <label class="opt" data-tip="Uses built-in model profiles instead of calling any API. Free, but only indicative."><input type="checkbox" id="forceSim"> <span><b>Dry run</b><small>no API calls, no cost</small></span></label>
+      </div>
       <ol class="stepper hidden" id="stepper">
         <li data-s="understand"><span></span>Understand</li><li data-s="test"><span></span>Test models</li><li data-s="rank"><span></span>Rank</li>
       </ol>
     </div>
     <div class="progress hidden" id="progressWrap" style="margin-top:10px"><div id="bar"></div></div>
-    <details class="cons" id="agentBox"><summary>Agent system <span class="hint">· tools, MCP, orchestration, data sources (leave blank to work it out from the goal)</span></summary>
+    <details class="cons" id="moreBox"><summary>More options <span class="hint">· data sensitivity, region, tools &amp; MCP, what you already run. Leave blank and it's worked out from your goal.</span></summary>
+      <div id="consBox">
+        <h3 class="h3" style="margin-top:12px">Data and platforms</h3>
+      <div class="reqs" style="margin-top:10px">
+        <div><label for="c_data">Most sensitive data</label><select id="c_data"><option value="">Work it out from the goal</option></select></div>
+        <div><label for="c_region">Must be processed in</label><select id="c_region"><option value="any">Any region</option><option value="US">US</option><option value="EU">EU</option><option value="APAC">APAC</option></select></div>
+        <div><label for="c_commit">Spend commitment with</label><select id="c_commit"><option value="">No commitment</option></select></div>
+        <div><label for="c_rate">Engineer-week cost <span class="hint">(optional)</span></label><div class="unit"><span>$</span><input type="number" id="c_rate" step="500" min="0" placeholder="for build cost"></div></div>
+      </div>
+      <label class="check" style="margin-top:10px"><input type="checkbox" id="c_images"> <span>Inputs include images or scans</span></label>
+      <div class="exrow"><span class="hint">Already running:</span>
+        <label class="check"><input type="checkbox" class="c_ex" value="gateway"> <span>AI gateway</span></label>
+        <label class="check"><input type="checkbox" class="c_ex" value="runtime"> <span>Agent runtime</span></label>
+        <label class="check"><input type="checkbox" class="c_ex" value="cache"> <span>Response cache</span></label>
+        <label class="check"><input type="checkbox" class="c_ex" value="vector_store"> <span>Vector store</span></label>
+      </div>
+      <p class="hint" style="margin:8px 0 0">Models that can't take this data or region, or can't read images, are ruled out before testing. Data rules come from the company policy; things you already run are reused at no extra cost, and a platform you have a commitment with wins when it's within 15% of the cheapest.</p>
+      </div>
+      <div id="agentBox">
+        <h3 class="h3" style="margin-top:16px">Agent system <span class="hint" style="font-weight:400">— only if it calls tools or APIs</span></h3>
       <div class="reqs" style="margin-top:10px">
         <div><label for="g_tools">APIs / tools it calls</label><input type="number" id="g_tools" min="0" placeholder="from goal"></div>
         <div><label for="g_int">Connected via</label><select id="g_int"><option value="">Work it out</option><option value="direct">Direct function tools</option><option value="mcp">MCP servers</option><option value="both">Both</option></select></div>
@@ -78,22 +100,7 @@
         <label class="check"><input type="checkbox" id="g_fresh"> <span>Documents change often</span></label>
         <label class="check"><input type="checkbox" id="g_sql"> <span>Facts live in databases or tables</span></label>
       </div>
-    </details>
-    <details class="cons" id="consBox"><summary>Constraints <span class="hint" id="consShort">· data sensitivity, region, what you already run</span></summary>
-      <div class="reqs" style="margin-top:10px">
-        <div><label for="c_data">Most sensitive data</label><select id="c_data"><option value="">Work it out from the goal</option></select></div>
-        <div><label for="c_region">Must be processed in</label><select id="c_region"><option value="any">Any region</option><option value="US">US</option><option value="EU">EU</option><option value="APAC">APAC</option></select></div>
-        <div><label for="c_commit">Spend commitment with</label><select id="c_commit"><option value="">No commitment</option></select></div>
-        <div><label for="c_rate">Engineer-week cost <span class="hint">(optional)</span></label><div class="unit"><span>$</span><input type="number" id="c_rate" step="500" min="0" placeholder="for build cost"></div></div>
       </div>
-      <label class="check" style="margin-top:10px"><input type="checkbox" id="c_images"> <span>Inputs include images or scans</span></label>
-      <div class="exrow"><span class="hint">Already running:</span>
-        <label class="check"><input type="checkbox" class="c_ex" value="gateway"> <span>AI gateway</span></label>
-        <label class="check"><input type="checkbox" class="c_ex" value="runtime"> <span>Agent runtime</span></label>
-        <label class="check"><input type="checkbox" class="c_ex" value="cache"> <span>Response cache</span></label>
-        <label class="check"><input type="checkbox" class="c_ex" value="vector_store"> <span>Vector store</span></label>
-      </div>
-      <p class="hint" style="margin:8px 0 0">Models that can't take this data or region, or can't read images, are ruled out before testing. Data rules come from the company policy; things you already run are reused at no extra cost, and a platform you have a commitment with wins when it's within 15% of the cheapest.</p>
     </details>
   </section>
 
@@ -101,14 +108,26 @@
     <div class="cachebar" id="cachebar"></div>
     <div class="confirm hidden" id="confirm"></div>
 
-    <!-- 1. The answer: winner + fallback -->
+    <!-- 1. The answer in one sentence, then winner + fallback -->
+    <div class="tldr" id="answer"></div>
     <section class="hero" id="hero"></section>
 
-    <!-- 3. Top 3 architectures -->
+    <!-- 2. Top 3 architectures -->
     <h2 class="sectiontitle" id="archTitle">Top 3 architectures for this agent</h2>
     <div class="hnote hidden" id="hnote"></div>
     <div class="top3" id="top3"></div>
 
+    <!-- 3. Everything else, one topic at a time -->
+    <nav class="rtabs" id="rtabs" role="tablist">
+      <button role="tab" data-tab="why" class="on">Why this design</button>
+      <button role="tab" data-tab="models">All models</button>
+      <button role="tab" data-tab="cost">Cost</button>
+      <button role="tab" data-tab="cases">Test cases</button>
+      <button role="tab" data-tab="decision">Decision record</button>
+      <button role="tab" data-tab="more">More</button>
+    </nav>
+
+    <div class="tabpanel" data-tab="why">
     <section class="card" id="sysCard">
       <div class="cardhead"><div><h2>System design for architecture 1</h2><p class="hint" id="sysHint" style="margin:0"></p></div></div>
       <div id="sys"></div>
@@ -119,6 +138,10 @@
       <ul class="robust" id="robust"></ul>
     </section>
 
+      <section class="card"><h2>How to build it</h2><div id="build" style="margin-top:6px"></div></section>
+    </div>
+
+    <div class="tabpanel hidden" data-tab="models">
     <!-- 4. Every model -->
     <section class="card">
       <div class="cardhead">
@@ -133,6 +156,9 @@
       <div class="pager" id="pager"></div>
     </section>
 
+    </div>
+
+    <div class="tabpanel hidden" data-tab="cost">
     <!-- What this run cost, per action -->
     <section class="card" id="costCard">
       <div class="cardhead"><div><h2>Cost of this run</h2><p class="hint" id="costHint" style="margin:0"></p></div>
@@ -141,24 +167,15 @@
       <p class="hint" id="costFoot" style="margin:10px 0 0"></p>
     </section>
 
-    <!-- Decision: kept only in the downloaded record -->
-    <section class="card" id="decision">
-      <div class="cardhead"><div><h2>Your decision</h2><p class="hint" style="margin:0">Goes into the decision record you download. Nothing is saved on the server.</p></div></div>
-      <div class="seg" id="decSeg"><button data-v="accept" class="on">Accept the recommendation</button><button data-v="override">Choose differently</button></div>
-      <div id="overrideBox" class="reqs hidden" style="margin-top:10px">
-        <div><label for="d_arch">Architecture</label><select id="d_arch"></select></div>
-        <div><label for="d_model">Model</label><select id="d_model"></select></div>
-      </div>
-      <div class="reqs" style="margin-top:10px">
-        <div style="grid-column:span 2"><label for="d_reason">Reason or notes</label><input type="text" id="d_reason" placeholder="e.g. We standardise on Bedrock; accuracy to be re-checked on 200 real tickets"></div>
-        <div><label for="d_by">Decided by</label><input type="text" id="d_by"></div>
-      </div>
-      <div class="runrow" style="margin-top:10px"><button class="primary" id="adr">⬇ Download decision record</button></div>
-    </section>
+      <section class="card"><div class="cardhead"><div><h2>Production controls <span class="hint" id="harnessShort"></span></h2>
+        <p class="hint" style="margin:0">What it takes to run architecture 1 safely in production, and what that adds to the cost.</p></div></div>
+        <div id="harnessBox"></div></section>
+    </div>
 
-    <!-- Details -->
-    <section class="card details">
-      <details data-d="understood"><summary>What I understood <span class="hint" id="specShort"></span></summary>
+    <div class="tabpanel hidden" data-tab="cases">
+      <section class="card">
+        <div class="cardhead"><div><h2>What it understood <span class="hint" id="specShort"></span></h2>
+          <p class="hint" style="margin:0" id="gradeNote"></p></div></div>
         <div class="pills" id="specPills" style="margin-top:10px"></div>
         <ul class="facts hint" id="assumptions" style="margin-top:8px"></ul>
         <button class="ghost" id="adjustBtn" style="margin-top:8px">Adjust &amp; re-run</button>
@@ -200,13 +217,33 @@
             <textarea id="a_ref" rows="4" class="askbox" style="min-height:0"></textarea></div>
           <div class="runrow"><button class="primary" id="rerun">Re-run</button></div>
         </div>
-      </details>
-      <details data-d="harness"><summary>Production harness around architecture 1 <span class="hint" id="harnessShort"></span></summary><div id="harnessBox" style="margin-top:10px"></div></details>
-      <details data-d="build"><summary>How to build architecture 1</summary><div id="build" style="margin-top:10px"></div></details>
-      <details data-d="ruled"><summary>Architectures ruled out for this task</summary><ul class="facts" id="ruled" style="margin-top:10px"></ul></details>
-      <details data-d="excluded"><summary>Models ruled out for this agent <span class="hint" id="exShort"></span></summary><ul class="facts" id="excluded" style="margin-top:10px"></ul></details>
-      <details data-d="cases"><summary>Test cases and each model's answers</summary><div class="tablewrap" style="margin-top:10px"><table class="drill" id="cases"></table></div></details>
-      <details data-d="method"><summary>How this advice is made</summary>
+      </section>
+      <section class="card"><h2>Each model's answers</h2><p class="hint" style="margin:0 0 8px">✓ correct · ✗ wrong · ⚠ made up (a hallucination). Hover a cell for the answer and how it was graded.</p>
+        <div class="tablewrap"><table class="drill" id="cases"></table></div></section>
+    </div>
+
+    <div class="tabpanel hidden" data-tab="decision">
+    <!-- Decision: kept only in the downloaded record -->
+    <section class="card" id="decision">
+      <div class="cardhead"><div><h2>Your decision</h2><p class="hint" style="margin:0">Goes into the decision record you download. Nothing is saved on the server.</p></div></div>
+      <div class="seg" id="decSeg"><button data-v="accept" class="on">Accept the recommendation</button><button data-v="override">Choose differently</button></div>
+      <div id="overrideBox" class="reqs hidden" style="margin-top:10px">
+        <div><label for="d_arch">Architecture</label><select id="d_arch"></select></div>
+        <div><label for="d_model">Model</label><select id="d_model"></select></div>
+      </div>
+      <div class="reqs" style="margin-top:10px">
+        <div style="grid-column:span 2"><label for="d_reason">Reason or notes</label><input type="text" id="d_reason" placeholder="e.g. We standardise on Bedrock; accuracy to be re-checked on 200 real tickets"></div>
+        <div><label for="d_by">Decided by</label><input type="text" id="d_by"></div>
+      </div>
+      <div class="runrow" style="margin-top:10px"><button class="primary" id="adr">⬇ Download decision record</button></div>
+    </section>
+
+    </div>
+
+    <div class="tabpanel hidden" data-tab="more">
+      <section class="card"><h2>Architectures ruled out for this task</h2><ul class="facts" id="ruled" style="margin-top:8px"></ul></section>
+      <section class="card"><h2>Models ruled out for this agent <span class="hint" id="exShort"></span></h2><ul class="facts" id="excluded" style="margin-top:8px"></ul></section>
+      <section class="card"><h2>How this advice is made</h2>
         <ol class="steps-ol" style="margin-top:10px">
           <li><b>Understand:</b> Claude (or built-in rules without a key) reads the goal and writes test cases. You can check and edit both; disagreements with the rules are flagged.</li>
           <li><b>Measure:</b> every model answers every test case — live where this server has access, simulated elsewhere (each row says which).</li>
@@ -215,8 +252,8 @@
           <li><b>Pick models:</b> every model is priced inside architecture 1. Best model = cheapest one that meets every requirement, preferring verified prices. Fallback = cheapest qualifying model on a different platform (and maker where possible), so one outage can't take both down.</li>
         </ol>
         <p class="hint">No LLM writes the recommendation. <b>Cost per 1,000 correct answers</b> = cost per request ÷ accuracy × 1,000: the efficiency figure to compare models.</p>
-      </details>
-    </section>
+      </section>
+    </div>
   </section>
 </main>
 <div id="tip"></div>
@@ -265,6 +302,12 @@ $("#addCase").onclick = () => addCase("", "");
 $("#caseTable").addEventListener("click", (e) => { if (e.target.closest(".rm")) e.target.closest("tr").remove(); });
 $("#rerun").onclick = () => advise({ goal: $("#goal").value.trim(), spec: readAdjust() });
 $("#adr").onclick = downloadADR;
+function showTab(name) {
+  document.querySelectorAll("#rtabs button").forEach((b) => { b.classList.toggle("on", b.dataset.tab === name); b.setAttribute("aria-selected", b.dataset.tab === name); });
+  document.querySelectorAll(".tabpanel").forEach((p) => p.classList.toggle("hidden", p.dataset.tab !== name));
+  try { sessionStorage.setItem("advisorTab", name); } catch (e) {}
+}
+$("#rtabs").onclick = (e) => { const b = e.target.closest("button[data-tab]"); if (!b) return; showTab(b.dataset.tab); track("details_opened", { section: b.dataset.tab }); };
 $("#compareBtn").onclick = () => {
   if (!ADV || !SPEC) return;
   $("#compareBtn").disabled = true; $("#cmpNote").textContent = "Comparing every eligible model on the same test cases…";
@@ -330,7 +373,7 @@ async function reopen() {
 function ago(t) { const m = Math.round((Date.now() / 1000 - t) / 60); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : `${Math.round(m / 60)} h ago`; }
 function renderCacheBar() {
   history.replaceState(null, "", location.pathname + "?r=" + ADV.key);
-  $("#cachebar").innerHTML = (ADV.cached_at ? `<span>♻ Reopened from cache — worked out ${ago(ADV.cached_at)} with today's prices and policy.</span><button class="linkbtn" id="fresh">Run it fresh</button>` : "") +
+  $("#cachebar").innerHTML = (ADV.cached_at ? `<span>♻ Reopened from cache — worked out ${ago(ADV.cached_at)} with today's prices and policy.</span><button class="linkbtn" id="fresh">Recalculate</button>` : "") +
     `<button class="linkbtn" id="copyLink" data-tip="Anyone with the link can reopen this result for 24 hours. It's kept in memory only, never saved.">🔗 Copy link to this result</button>`;
   $("#copyLink").onclick = () => navigator.clipboard.writeText(location.href).then(() => ($("#copyLink").textContent = "✓ Link copied"));
   if ($("#fresh")) $("#fresh").onclick = () => advise(SRC.source === "edited" ? { goal: $("#goal").value.trim(), spec: SPEC, fresh: true } : { goal: $("#goal").value.trim(), fresh: true });
@@ -433,6 +476,7 @@ async function advise(body) {
       }
     }
     document.querySelectorAll("#stepper li").forEach((li) => (li.className = "done"));
+    setTimeout(() => { $("#stepper").classList.add("hidden"); $("#progressWrap").classList.add("hidden"); }, 1200);
     await loadKnowledge();
     render();
     $("#results").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -460,12 +504,34 @@ function render() {
   const conf = SRC.confirm || [];
   $("#confirm").classList.toggle("hidden", !conf.length);
   $("#confirm").innerHTML = conf.length ? `<b>Please confirm:</b> ${conf.map((c) => `${esc(c.label)} read as <b>${esc(String(c.architect))}</b> (rules suggest ${esc(String(c.rules))})`).join(" · ")}. <a href="#" id="fixit">Adjust</a>` : "";
-  if (conf.length) $("#fixit").onclick = (e) => { e.preventDefault(); document.querySelector('details[data-d="understood"]').open = true; $("#adjust").classList.remove("hidden"); };
-  PAGE = 1; loadQuota(); renderCacheBar(); renderHero(); renderArchitectures(); renderSystem(); renderRobust(); renderPlatforms(); renderTable(); renderDetails(); renderHarness(); renderDecision(); renderCost();
+  if (conf.length) $("#fixit").onclick = (e) => { e.preventDefault(); showTab("cases"); $("#adjust").classList.remove("hidden"); $("#adjust").scrollIntoView({ behavior: "smooth" }); };
+  PAGE = 1; loadQuota(); renderCacheBar(); renderAnswer(); renderHero(); renderArchitectures(); renderSystem(); renderRobust(); renderPlatforms(); renderTable(); renderDetails(); renderHarness(); renderDecision(); renderCost();
+  let tab = "why"; try { tab = sessionStorage.getItem("advisorTab") || "why"; } catch (e) {}
+  showTab(tab);
 }
 
+const GLOSS = {
+  "Per month": "Model cost per month at your volume, including the production controls when they're on.",
+  "Accuracy": "Share of test cases answered correctly. 'Likely' is the 95% range: with few test cases the true rate could be anywhere in it.",
+  "95% within": "95 of every 100 requests are answered within this time (the p95 latency).",
+  "Per 1K correct": "Cost for every 1,000 correct answers (cost per request ÷ accuracy × 1,000): the fairest way to compare models.",
+};
 function tile(k, v, sub, state) {
-  return `<div class="tile ${state || ""}"><div class="tk">${k}</div><div class="tv">${v}</div><div class="ts">${sub || "&nbsp;"}</div></div>`;
+  return `<div class="tile ${state || ""}"><div class="tk"${GLOSS[k] ? ` data-tip="${esc(GLOSS[k])}"` : ""}>${k}</div><div class="tv">${v}</div><div class="ts">${sub || "&nbsp;"}</div></div>`;
+}
+function renderAnswer() {
+  const d = ADV.top[0], p = ADV.models;
+  if (!d) { $("#answer").innerHTML = ""; return; }
+  const st = strength(), stab = ADV.stability || {}, g = ADV.grading || {};
+  const miss = d.checks.filter((c) => !c.pass).map((c) => c.label.toLowerCase());
+  const acc = d.accuracy != null ? `, <b>${pct(d.accuracy)}</b> accurate on ${d.n} test cases (likely ${range(d)})` : "";
+  const badges = [`<span class="strength ${st[1]}" data-tip="${esc(st[2])}">Confidence: ${st[0]}</span>`];
+  if (ADV.cached_at || stab.spec === "pinned" || stab.reused) badges.push(`<span class="badge2" data-tip="Within one browser session the same goal keeps the same test cases and each model's measured answers, so the recommendation doesn't drift between runs.">⟲ Same test cases as earlier in this session</span>`);
+  if (g.judge) badges.push(`<span class="badge2" data-tip="Free-text answers the keyword check couldn't confirm were checked by a judge model for meaning.">⚖ ${g.judge} answers checked by a judge</span>`);
+  if (ADV.scope === "shortlist") badges.push(`<span class="badge2" data-tip="Only a shortlist of models was tested. Use Compare all models in the All models tab to test every one.">${ADV.evaluated_models.length} of ${ADV.eligible_models} models tested</span>`);
+  $("#answer").innerHTML = `<div class="ans-k">Recommendation for “${esc(SPEC.summary)}”</div>
+    <p class="ans-main">Build a <b>${esc(d.name)}</b> on <b>${esc(modelName(p.primary))}</b>${p.fallback ? `, with <b>${esc(modelName(p.fallback))}</b> as the fallback` : ""}. About <b>${fmt$(d.monthly)}/month</b>${acc}. ${d.passes ? "Meets every requirement." : `Closest option: misses ${esc(miss.join(", "))}.`}</p>
+    <div class="ans-badges">${badges.join("")}</div>`;
 }
 function reqChips(d) {
   const lab = { accuracy: "Accuracy", halluc: "Hallucinations", latency: "Speed", cost: "Budget", context: "Context", quota: "Peak load" };
@@ -490,7 +556,7 @@ function heroFacts(d, p) {
 }
 function heroNotes(d, p) {
   const n = [], acc = d.checks.find((c) => c.key === "accuracy");
-  if (acc && acc.pass && !acc.sure) n.push(`📊 Measured ${pct(d.accuracy)} on ${d.n} test cases, but the true rate could be as low as <b>${pct(d.acc_lo)}</b>. Upload real cases (Adjust → Upload CSV) to confirm it clears ${pct(SPEC.accuracy_target)}.`);
+  if (acc && acc.pass && !acc.sure) n.push(`📊 Measured ${pct(d.accuracy)} on ${d.n} test cases, but the true rate could be as low as <b>${pct(d.acc_lo)}</b>. Upload real cases (Test cases tab → Adjust → Upload CSV) to confirm it clears ${pct(SPEC.accuracy_target)}.`);
   if ((p.near_misses || []).length) n.push(`🔎 Cheaper models that missed the accuracy target by a margin within noise: ${p.near_misses.map((x) => `<b>${esc(x.label)}</b> on ${esc(x.platform)} (${pct(x.accuracy)}, ${fmt$(x.monthly)}/mo)`).join(", ")}. More test cases would settle it.`);
   if (p.fallback_retirement) n.push(`⚠ The fallback has a retirement notice: ${esc(p.fallback_retirement.title)}.`);
   return n.length ? `<div class="notes">${n.map((x) => `<div>${x}</div>`).join("")}</div>` : "";
@@ -507,7 +573,7 @@ function renderHero() {
     : good.length === 1 ? "The only model that meets every requirement." : "No model met every requirement; this is the closest.";
   const cu = p.cheaper_unverified;
   $("#hero").innerHTML = `
-    <div class="hero-goal"><span class="eyebrow">Recommendation for</span><span>“${esc(SPEC.summary)}”</span></div>
+
     <div class="hero-grid">
       <article class="winner">
         <div class="badge-row"><span class="medal">🏆 Winner · best model</span>${statusBadge(i)} ${r ? `<span class="modebadge ${r.mode}">${r.mode}</span>` : ""}</div>
@@ -520,7 +586,7 @@ function renderHero() {
           ${tile("95% within", dur(d.p95_ms), `median ${dur(d.p50_ms)}`)}
           ${tile("Per 1K correct", d.accuracy ? fmt$(d.cost_per_req * 1000 / d.accuracy) : "—", `hallucinations ${pct(d.halluc)}`)}
         </div>
-        <p class="whywin">${why}${ADV.scope === "shortlist" ? `<br><span class="hint">Picked from a shortlist of ${ADV.evaluated_models.length} of ${ADV.eligible_models} models — use <b>Compare all models</b> under the table to check every one.</span>` : ""}</p>
+        <p class="whywin">${why}${ADV.scope === "shortlist" ? `<br><span class="hint">Picked from a shortlist of ${ADV.evaluated_models.length} of ${ADV.eligible_models} models — use <b>Compare all models</b> in the All models tab to check every one.</span>` : ""}</p>
         ${heroFacts(d, p)}
       </article>
       <article class="runner">
@@ -576,17 +642,17 @@ function chainHtml(d) {
   const after = [has("grounding") ? "Grounding check" : null, has("output_check") ? "Output check" : null].filter(Boolean)
     .map((x) => `<span class="node guard">${x}</span>`);
   const arrow = '<span class="arrow">→</span>';
-  return `<div class="hframe"><div class="hlabel">🛡 Production harness · ${d.harness.controls.length} controls</div>
+  return `<div class="hframe"><div class="hlabel">🛡 Production controls · ${d.harness.controls.length} controls</div>
     <div class="chain">${[...before, nodes(d.flow), ...after].join(arrow)}</div></div>`;
 }
 function renderHarness() {
   const h = ADV.harness || {}, d = ADV.top[0];
   const note = !h.on && h.recommended
-    ? `⚠ <b>These are prototype numbers.</b> This agent should run with a production harness because ${h.reasons.length > 1 ? h.reasons.slice(0, -1).join(", ") + " and " + h.reasons.at(-1) : h.reasons[0]}. Tick <b>Production harness</b> and re-run to see what it costs.`
-    : !h.on ? `These numbers are for the architecture alone. Tick <b>Production harness</b> and re-run to include guardrails, evaluation and failover.` : "";
+    ? `⚠ <b>These are prototype numbers.</b> This agent needs production controls because ${h.reasons.length > 1 ? h.reasons.slice(0, -1).join(", ") + " and " + h.reasons.at(-1) : h.reasons[0]}. Tick <b>Production-ready</b> and re-run to see what it costs.`
+    : !h.on ? `These numbers are for the architecture alone. Tick <b>Production-ready</b> and re-run to include guardrails, evaluation and failover.` : "";
   $("#hnote").classList.toggle("hidden", !note); $("#hnote").innerHTML = note;
   const box = $("#harnessBox");
-  if (!d || !d.harness) { $("#harnessShort").textContent = "· off"; box.innerHTML = `<p class="hint">Not included in this run. Tick <b>Production harness</b> next to the goal and re-run.</p>`; return; }
+  if (!d || !d.harness) { $("#harnessShort").textContent = "· off"; box.innerHTML = `<p class="hint">Not included in this run. Tick <b>Production-ready</b> next to the goal and re-run.</p>`; return; }
   const hz = d.harness;
   $("#harnessShort").textContent = `· ${hz.controls.length} controls · ${fmt$(hz.monthly)}/month`;
   const layers = [...new Set(hz.controls.map((c) => c.layer_name))];
@@ -616,7 +682,7 @@ function renderSystem() {
       ${t.effects && t.effects.length ? `<div class="effects">${t.effects.map((e) => e.rank ? `<span class="req ${e.rank === 1 ? "ok" : ""}">#${e.rank} ${esc(e.name)}</span>` : `<span class="req" data-tip="${esc(e.ruled_out || "")}">✗ ${esc(e.name)}</span>`).join("")}</div>` : ""}
       <div class="hint">${srcLinks(t.sources)}</div></li>`).join("");
   const roles = `<table class="htable"><thead><tr><th>Role</th><th>Model</th><th>Platform</th></tr></thead><tbody>${sd.roles.map((r) => `<tr><td>${esc(r.role)}</td><td><b>${esc(r.model === "jev" ? "Jev" : mlabel(r.model))}</b></td><td class="hint">${esc(r.model === "jev" ? "TypeSafe" : mplat(r.model))}</td></tr>`).join("")}</tbody></table>
-    <p class="hint">${SPEC.multi_model ? "Multi-model on: a separate small model is used only where it's cheaper and good enough." : "Multi-model off: one model for every role."}</p>`;
+    <p class="hint">${SPEC.multi_model ? "Mix models is on: a separate cheaper model is used only where it's cheaper and good enough." : "Mix models is off: one model for every role."}</p>`;
   const ig = sd.integration;
   const tools = ig ? `<p><b>${esc(ig.recommendation)}</b> — ${ig.why.map(esc).join("; ")}.</p>
     <div class="facts-row"><span class="fact">🔧 ${ig.tool_count} tools · ~${ig.calls_per_request} calls per request · ${ig.api_latency_ms} ms each</span>
@@ -737,13 +803,16 @@ function renderDetails() {
     ${d.components ? `<p class="hint">Components: ${d.components.map(esc).join(" · ")}</p>` : ""}`;
   const ex = ADV.excluded_models || [];
   $("#exShort").textContent = `· ${ex.length}`;
+  const g = ADV.grading || {};
+  $("#gradeNote").textContent = `Graded ${["exact", "keyword", "judge"].filter((k) => g[k]).map((k) => `${g[k]} ${k === "exact" ? "by label" : k === "keyword" ? "by key phrase" : "by a judge model"}`).join(" · ") || "—"}.` +
+    (g.judge_on ? "" : " Free-text paraphrases aren't judged in this run (dry run, no Anthropic key, or the data rules don't allow it).");
   const byWhy = {}; ex.forEach((e) => (byWhy[e.reason] = (byWhy[e.reason] || []).concat(e.label)));
   $("#excluded").innerHTML = Object.entries(byWhy).map(([w, ls]) => `<li><b>${esc(w)}</b>: ${esc(ls.join(", "))}</li>`).join("") || "<li>None — every approved model could take this job.</li>";
   $("#ruled").innerHTML = Object.entries(ADV.not_applicable).map(([k, why]) => `<li><b>${esc(KNAME[k] || k)}</b>: ${esc(why)}.</li>`).join("");
   const ids = Object.keys(ADV.per_case), cols = ids.map((m) => [modelName(m), ADV.per_case[m]]).concat(ADV.jev_per_case ? [["Jev", ADV.jev_per_case]] : []);
   $("#cases").innerHTML = `<thead><tr><th>Test case</th><th>Expected</th>${cols.map(([n]) => `<th class="rot">${esc(n)}</th>`).join("")}</tr></thead><tbody>` +
     ADV.cases.map((c, i) => `<tr><td style="white-space:normal;min-width:220px">${esc(c.input.slice(0, 120))}</td><td>${esc(c.expected || "—")}</td>` +
-      cols.map(([, rs]) => { const r = rs[i]; return `<td class="${r.correct ? "cell-ok" : r.correct === false ? "cell-bad" : ""}" title="${esc(r.answer)}">${r.correct ? "✓" : r.correct === false ? (r.hallucinated ? "⚠" : "✗") : "·"}</td>`; }).join("") + "</tr>").join("") + "</tbody>";
+      cols.map(([, rs]) => { const r = rs[i]; return `<td class="${r.correct ? "cell-ok" : r.correct === false ? "cell-bad" : ""}" title="${esc((r.answer || "") + (r.graded_by ? ` — graded by ${r.graded_by}` : ""))}">${r.correct ? "✓" : r.correct === false ? (r.hallucinated ? "⚠" : "✗") : "·"}</td>`; }).join("") + "</tr>").join("") + "</tbody>";
 }
 const KNAME = { router: "Router to specialised handlers", agentic_rag: "Agentic retrieval", rag_cascade: "RAG with small-to-large escalation", single_call: "Single model call", cascade: "Small model first, escalate when unsure", decision_model: "Decision model with LLM fallback",
   long_context: "Whole documents in the prompt", rag: "RAG", workflow: "Fixed workflow", evaluator_optimizer: "Draft, critique and revise",
