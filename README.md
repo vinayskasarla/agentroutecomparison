@@ -78,28 +78,30 @@ The suite includes near-duplicate questions on purpose. "Capital of Australia" a
 Australia" produce a correct semantic-cache hit. If you lower the threshold to 0.7, the cache answers the
 "Austria" question with Canberra, which shows the accuracy risk of a loose semantic cache.
 
-## Run it
+## Run it locally
 
 ```bash
 git clone https://github.com/vinayskasarla/agentroutecomparison.git && cd agentroutecomparison
-python3 -m venv .venv && source .venv/bin/activate   # Python 3.11+
+python3 -m venv .venv && source .venv/bin/activate     # Python 3.11+ (Windows: .venv\Scripts\activate)
 pip install -r requirements.txt
-redis-server --daemonize yes          # optional; falls back to an in-process cache
-export ANTHROPIC_API_KEY=...          # any of these enable live calls for that provider
-export OPENAI_API_KEY=...  XAI_API_KEY=...  GEMINI_API_KEY=...
-export TYPESAFE_API_KEY=...           # live Jev calls
-uvicorn app:app --port 8088           # then open http://localhost:8088
+cp .env.example .env                                     # then fill in the keys you have
+python check_setup.py                                    # one tiny live call per vendor: what's live vs simulated
+uvicorn app:app --port 8088                              # open http://localhost:8088
 ```
 
-You can also copy `.env.example` to `.env`, fill in your keys, and load it with `set -a; source .env; set +a`
-before starting.
+The app reads `.env` itself; real environment variables win over it, which is how AWS passes Secrets Manager values.
+Any vendor without credentials is simulated and labelled as such on every screen, and never chosen as the winner
+when something was measured live.
 
-If you run it on a different port, set `SELF_URL=http://127.0.0.1:<port>` so the service hops can reach
-each other.
+**Real numbers for a report:** with the app running, in a second terminal:
 
-Model IDs, list prices, simulator profiles, the eval suite and each route's capabilities are all in
-`catalog.py`. Prices are defaults: override the selected model's price in the UI under **Assumptions**, or
-edit the catalog to match your contracts and the latest model versions.
+```bash
+python report.py              # the sample goals, first runs only (~$0.05 each)
+python report.py --compare    # plus a full comparison per goal (uses the daily comparison limit)
+python report.py --goals my_goals.txt --harness   # your own goals, one per line, with production controls priced in
+```
+
+It writes `reports/advisor-report-<time>.md` and `.csv`.
 
 ## Keeping the advice trustworthy
 

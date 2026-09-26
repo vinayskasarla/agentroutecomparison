@@ -130,7 +130,7 @@ async def _call_anthropic(model_id, prompt, client=None, api_model=None):
     global _anthropic
     if client is None:
         if _anthropic is None:
-            _anthropic = anthropic.AsyncAnthropic()
+            _anthropic = anthropic.AsyncAnthropic(max_retries=4)  # ride out short rate-limit bursts
         client = _anthropic
     kwargs = {}
     if model_id != "claude-haiku-4-5":
@@ -231,7 +231,9 @@ async def _call_bedrock(m, prompt):
 async def _call_azure_openai(m, prompt):
     """Azure AI Foundry's OpenAI-compatible v1 endpoint; the deployment name defaults to the base model ID."""
     endpoint = os.environ["AZURE_OPENAI_ENDPOINT"].rstrip("/")
-    body = {"model": m.get("azure_deployment") or base_model(m["id"]),
+    # Deployment name: AZURE_DEPLOYMENT_GPT_5_MINI style override, else the catalog's, else the base model ID.
+    override = os.environ.get("AZURE_DEPLOYMENT_" + re.sub(r"[^A-Z0-9]", "_", base_model(m["id"]).upper()))
+    body = {"model": override or m.get("azure_deployment") or base_model(m["id"]),
             "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}]}
     resp = await _http.post(f"{endpoint}/openai/v1/chat/completions", json=body,
                             headers={"api-key": os.environ["AZURE_OPENAI_API_KEY"]})

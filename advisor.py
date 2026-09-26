@@ -195,6 +195,10 @@ Guidance:
   isn't covered by the documents, or the input lacks the needed information).
 - For tool_actions or research tasks, write cases that test the decision the model must get right (which
   action/tool, which record, which conclusion), still with short expected answers.
+- labels are ONLY for tasks where the entire answer is one of the labels. If the answer has several fields
+  (e.g. an order number AND an action), leave labels empty and write the expected answer as fields joined with
+  "; " like "order_number: 58234; action: refund". Never use | inside a field list: | only separates whole
+  alternative answers.
 - For agentic goals, count the distinct APIs/tools and request types, and say whether the steps are the same every time.
 - Where the goal doesn't say, assume sensible values for a mid-size company and list them in assumptions.
 
@@ -328,6 +332,15 @@ def finalize_spec(spec: dict) -> dict:
     s["labels"] = [str(x).strip() for x in (s.get("labels") or []) if str(x).strip()][:30]
     if s["task_type"] == "classification" and not s["labels"] and s.get("labels_from_sample"):
         s["labels"] = SAMPLE_CASES["classification"]["labels"]
+    # Labels are only valid if the expected answers ARE labels. Otherwise the test prompt would force a one-label
+    # answer and every model would fail a multi-field case (found live: an extraction goal scored 0% everywhere).
+    cases = [c for c in (s.get("test_cases") or []) if (c.get("expected") or "").strip()]
+    if s["labels"] and cases:
+        lab = {x.strip().lower() for x in s["labels"]} | {"unknown"}
+        fits = sum(1 for c in cases if all(a.strip().lower() in lab for a in c["expected"].split("|")))
+        if fits / len(cases) < 0.6:
+            s["labels"] = []
+            s.setdefault("assumptions", []).append("Fixed answers were dropped: the expected answers aren't single labels, so models answer in full.")
     s["document_size"] = s.get("document_size") if s.get("document_size") in ("none", "small", "large") else (
         "large" if s.get("needs_documents") else "none")
     s["risk"] = s.get("risk") if s.get("risk") in ("low", "medium", "high") else "medium"
@@ -377,14 +390,35 @@ def items_for(spec: dict) -> list:
     """Test cases in the shape app.normalize_items expects."""
     ref = (spec.get("reference_material") or "").strip()
     labels = spec.get("labels") or None
+    # Every test prompt states the task: without it a model answers the raw input (found live: support emails got
+    # a customer-service reply instead of the extracted order number and action).
+    task = f"Task: {spec.get('summary') or ''}".strip()
+    fields = _field_names(spec.get("test_cases", []))
+    fmt = (f"\nGive the answer as field: value pairs separated by \"; \" ({'; '.join(f + ': ...' for f in fields)}). "
+           "Use unknown for a value the input doesn't contain.") if fields else ""
     out = []
-    for c in spec.get("test_cases", [])[:40]:
-        text = c["input"]
+    for c in spec.get("test_cases", [])[:60]:
         if ref:
-            text = (f"Reference material:\n{ref}\n\nQuestion: {c['input']}\n"
-                    'Answer only from the reference material. If it doesn\'t cover the question, answer "unknown".')
+            text = (f"{task}\n\nReference material:\n{ref}\n\nQuestion: {c['input']}\n"
+                    'Answer only from the reference material. If it doesn\'t cover the question, answer "unknown".' + fmt)
+        else:
+            text = f"{task}\n\nInput:\n{c['input']}{fmt}"
         out.append({"input": text, "expected": c.get("expected", ""), "options": labels, "grounded": bool(ref)})
     return out
+
+
+def _field_names(cases):
+    """Field names when the expected answers are field lists ("order_number: 1; action: refund"), else []."""
+    names = []
+    for c in cases:
+        exp = (c.get("expected") or "").replace("|", ";")
+        parts = [p for p in exp.split(";") if p.strip()]
+        if len(parts) >= 2 and all(re.match(r"^\s*[\w .-]{1,40}?\s*[:=]", p) for p in parts):
+            for p in parts:
+                n = re.split(r"[:=]", p, 1)[0].strip()
+                if n not in names:
+                    names.append(n)
+    return names[:8]
 
 
 # ------------------------------------------------------------------ composing and ranking designs
@@ -535,8 +569,10 @@ def applicable(spec):
                         "one search per question is enough here" if data else "answers don't need your documents or data"),
         "workflow": ((multi or tools or t in ("summarization", "generation")) and spec["steps_known"],
                      "the steps vary per request, so a fixed chain can't cover them" if not spec["steps_known"] else "the task is a single step"),
-        "router": (spec["request_types"] >= TH["router_at_request_types"],
-                   f"requests don't split into {TH['router_at_request_types']}+ distinct types that need different handling"),
+        "router": (spec["request_types"] >= TH["router_at_request_types"] and (tools or multi),
+                   "picking a label or answering a question is one step; routing pays off when request types need "
+                   "different tools or steps" if spec["request_types"] >= TH["router_at_request_types"]
+                   else f"requests don't split into {TH['router_at_request_types']}+ distinct types that need different handling"),
         "tool_agent": (tools, "the agent doesn't need to call your systems or take actions"),
         "evaluator_optimizer": (t in ("generation", "summarization", "research") and not tools,
                                 "answers are short and checkable, so a review loop adds cost without adding quality"),
@@ -570,8 +606,10 @@ def applicable(spec):
     return ok, why_not
 
 
-def pick_models(res, spec, provider_of):
-    """Choose primary, small and fallback models from measured single-call results."""
+def pick_models(res, spec, provider_of, live=None):
+    """Choose primary, small and fallback models from measured single-call results. Supporting roles (the small
+    first-try / router model, the escalation model) come from live measurements whenever any exist, so a design
+    never mixes a real model with a simulated helper (found live: a simulated first-try model made RAG look 50x cheaper)."""
     rows = {}
     for m in res:
         agg = _agg(_direct_rows(res, m))
@@ -586,9 +624,10 @@ def pick_models(res, spec, provider_of):
     by_quality = lambda m: (-(rows[m]["accuracy"] or 0), rows[m]["halluc"] or 0, rows[m]["cost_per_req"])  # noqa: E731
     primary = min(good, key=by_cost) if good else min(rows, key=by_quality)
     best = min(rows, key=by_quality)
-    small_pool = [m for m in rows if catalog.MODEL_BY_ID[m]["tier"] == "small"] or list(rows)
-    small = min(small_pool, key=lambda m: (-(rows[m]["accuracy"] or 0), rows[m]["cost_per_req"]))
-    large_pool = [m for m in rows if catalog.MODEL_BY_ID[m]["tier"] != "small"]
+    src = [m for m in rows if m in live] if live else list(rows)
+    small_pool = [m for m in src if catalog.MODEL_BY_ID[m]["tier"] == "small"] or src
+    small = min(small_pool, key=by_quality)
+    large_pool = [m for m in src if catalog.MODEL_BY_ID[m]["tier"] != "small"]
     best_large = min(large_pool, key=by_quality) if large_pool else None
     others = [m for m in rows if provider_of(m) != provider_of(primary)]
     fb_good = [m for m in others if m in good] or [m for m in others if m in verified and rows[m]["accuracy"] is not None
@@ -686,8 +725,9 @@ def choose_from_table(table, first, spec=None):
     tested = [r for r in table if r["tested"]]
     all_good = [r for r in tested if r["meets"]]
     live = [r for r in tested if r["mode"] == "live"]
-    # Prefer rows measured live over simulated ones whenever any live row qualifies.
-    if any(r["meets"] for r in live):
+    # Whenever anything was measured live, the winner comes from real measurements only; a model that qualifies
+    # only in simulation is reported (simulated_qualifiers), never recommended on made-up numbers.
+    if live:
         tested = live
     good = [r for r in tested if r["meets"]]
     pool = [r for r in good if r["status"] == "verified"] or good
@@ -724,7 +764,7 @@ def rank_designs(spec, res, jev, mode=None, jev_blocked=False):
     check it against the requirements; then rank the architectures and return the top 3 with reasons."""
     mode = mode or {}
     provider_of = lambda m: catalog.MODEL_BY_ID[m]["provider"]  # noqa: E731
-    picks = pick_models(res, spec, provider_of)
+    picks = pick_models(res, spec, provider_of, live={m for m, v in mode.items() if v == "live"})
     ok, why_not = applicable(spec)
     if jev is None and "decision_model" in ok:
         ok.remove("decision_model")
@@ -744,6 +784,10 @@ def rank_designs(spec, res, jev, mode=None, jev_blocked=False):
         live_ok = [r for r in table if r["tested"] and r["meets"] and r["mode"] == "live"]
         d = build_design(arch, {**base, "primary": primary, "fallback": fallback}, "value", res, jev, spec)
         d["_table"], d["_good"], d["_cheaper"] = table, good, cheaper_unverified(table, primary)
+        prim_row = next(r for r in table if r["id"] == primary)
+        d["_simq"] = [{"id": r["id"], "label": r["label"], "platform": r["platform"], "monthly": r["monthly"]}
+                      for r in table if r["tested"] and r["meets"] and r["mode"] != "live" and prim_row["mode"] == "live"
+                      and r["monthly"] < prim_row["monthly"]][:3]
         d["_live_ok"] = len(live_ok)
         designs.append(d)
     score_designs(designs, spec)
@@ -754,7 +798,7 @@ def rank_designs(spec, res, jev, mode=None, jev_blocked=False):
         first = top[0]
         table = first["_table"]
         picks.update(primary=first["models"]["primary"], fallback=first["models"]["fallback"], qualifying=first["_good"],
-                     cheaper_unverified=first["_cheaper"], live_qualified=first["_live_ok"])
+                     cheaper_unverified=first["_cheaper"], live_qualified=first["_live_ok"], simulated_qualifiers=first["_simq"])
         prim = next(r for r in table if r["id"] == first["models"]["primary"])
         # Cheaper models that missed only on accuracy/hallucinations, but where the 95% range still reaches the
         # target: more test cases could make them qualify. And qualifying models the winner isn't clearly better than.
@@ -770,7 +814,7 @@ def rank_designs(spec, res, jev, mode=None, jev_blocked=False):
             fbd = build_design(first["arch"], {**first["models"], "primary": first["models"]["fallback"]}, "fallback", res, jev, spec)
             picks["fallback_design"] = {k: fbd[k] for k in ("accuracy", "right", "n", "halluc", "p95_ms", "monthly", "cost_per_req", "passes", "acc_lo", "acc_hi")}
     for d in designs:
-        for k in ("_table", "_good", "_cheaper", "_live_ok"):
+        for k in ("_table", "_good", "_cheaper", "_live_ok", "_simq"):
             d.pop(k, None)
     explain(top, spec, picks)
     system = system_design(top[0], spec) if top else None

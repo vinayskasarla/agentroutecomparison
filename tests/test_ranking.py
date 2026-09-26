@@ -72,3 +72,15 @@ def test_accuracy_range_and_near_misses():
     r = advisor.rank_designs(make_spec(accuracy_target=0.95), res, None, MODE)
     first = r["top"][0]
     assert first["acc_lo"] < first["accuracy"] <= first["acc_hi"]
+
+
+def test_supporting_roles_use_live_models_when_any_exist():
+    """Regression (live report): a simulated small model inside a cascade made a live design look 50x cheaper."""
+    res = make_res({"claude-haiku-4-5": 11, "claude-sonnet-5": 12, "bedrock-nova-micro": 12, "bedrock-gpt-oss-20b": 12})
+    mode = {"claude-haiku-4-5": "live", "claude-sonnet-5": "live", "bedrock-nova-micro": "simulated", "bedrock-gpt-oss-20b": "simulated"}
+    spec = make_spec("Answer customer questions from our help center docs. 20k a day", task_type="grounded_qa",
+                     needs_documents=True, document_size="large")
+    r = advisor.rank_designs(spec, res, None, mode)
+    for d in r["all"]:
+        for role in ("primary", "small"):
+            assert mode[d["models"][role]] == "live", (d["arch"], role, d["models"][role])

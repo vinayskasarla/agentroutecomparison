@@ -60,6 +60,28 @@ def first_label(answer, options):
     return best[1] if best else None
 
 
+FIELD = re.compile(r"^\s*([\w .-]{1,40}?)\s*[:=]\s*(.+?)\s*$")
+
+
+def _fields(expected):
+    """Parse "key: value; key: value" into [(key, value)], or None if it isn't a field list."""
+    parts = [p for p in re.split(r"[;\n]", expected) if p.strip()]
+    out = [FIELD.match(p) for p in parts]
+    return [(m.group(1).strip(), m.group(2).strip()) for m in out] if parts and len(parts) >= 2 and all(out) else None
+
+
+def _fields_match(answer, fields):
+    a = normalize(answer)
+    for _, value in fields:
+        v = normalize(value)
+        if v in ("unknown", "none", "n/a", "null", "not provided"):
+            if not (is_decline(answer) or re.search(r"\b(unknown|none|n/a|null|not provided|missing)\b", a)):
+                return False
+        elif not _contains(a, value):
+            return False
+    return True
+
+
 def grade(answer, accept):
     """Backwards-compatible keyword grade: True if any accepted phrase appears (normalised)."""
     a = normalize(answer)
@@ -76,6 +98,9 @@ def grade_item(answer, item):
         return (choice is not None and any(normalize(choice) == normalize(x) for x in accept)), "exact", False
     if grade(answer, accept):
         return True, "keyword", False
+    fields = [_fields(x) for x in accept]
+    if all(fields):  # "order_number: 58234; action: refund" -> every field's value must appear in the answer
+        return any(_fields_match(answer, f) for f in fields), "fields", False
     # Free text the keyword check can't confirm: a paraphrase may still be right. Short expected answers
     # (an ID, a number, one word) are left to the keyword check; phrases go to the judge.
     long_expected = any(len(normalize(x).split()) >= 2 for x in accept)

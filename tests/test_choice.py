@@ -50,3 +50,11 @@ def test_fallback_named_even_when_nothing_on_another_platform_qualifies():
          row("x", "Amazon Bedrock", 5, meets=False, mode="simulated", acc=0.93)]
     primary, fallback, _ = advisor.choose_from_table(t, None)
     assert primary == "a" and fallback == "x"
+
+
+def test_simulated_model_never_wins_when_anything_was_measured_live():
+    """Regression (live report): a simulated model became 'best' because no live-measured model qualified."""
+    t = [row("sim", "Amazon Bedrock", 5, meets=True, mode="simulated"), row("live", "Anthropic API", 90, meets=False, acc=0.9)]
+    assert advisor.choose_from_table(t, None)[0] == "live"
+    t2 = [row("simA", "P1", 5, mode="simulated"), row("simB", "P2", 9, mode="simulated")]  # dry run: all simulated
+    assert advisor.choose_from_table(t2, None)[0] == "simA"

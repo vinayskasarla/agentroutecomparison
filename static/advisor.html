@@ -558,7 +558,8 @@ function heroNotes(d, p) {
   const n = [], acc = d.checks.find((c) => c.key === "accuracy");
   if (acc && acc.pass && !acc.sure) n.push(`📊 Measured ${pct(d.accuracy)} on ${d.n} test cases, but the true rate could be as low as <b>${pct(d.acc_lo)}</b>. Upload real cases (Test cases tab → Adjust → Upload CSV) to confirm it clears ${pct(SPEC.accuracy_target)}.`);
   if ((p.near_misses || []).length) n.push(`🔎 Cheaper models that missed the accuracy target by a margin within noise: ${p.near_misses.map((x) => `<b>${esc(x.label)}</b> on ${esc(x.platform)} (${pct(x.accuracy)}, ${fmt$(x.monthly)}/mo)`).join(", ")}. More test cases would settle it.`);
-  if (p.fallback_retirement) n.push(`⚠ The fallback has a retirement notice: ${esc(p.fallback_retirement.title)}.`);
+  if ((p.simulated_qualifiers || []).length) n.push(`🧪 Cheaper in simulation only: ${p.simulated_qualifiers.map((x) => `<b>${esc(x.label)}</b> on ${esc(x.platform)} (${fmt$(x.monthly)}/mo)`).join(", ")}. The winner comes only from models measured live; add those vendors' keys to measure them.`);
+    if (p.fallback_retirement) n.push(`⚠ The fallback has a retirement notice: ${esc(p.fallback_retirement.title)}.`);
   return n.length ? `<div class="notes">${n.map((x) => `<div>${x}</div>`).join("")}</div>` : "";
 }
 function renderHero() {

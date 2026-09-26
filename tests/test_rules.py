@@ -36,7 +36,7 @@ def test_varying_steps_rule_out_fixed_workflow():
 
 
 def test_request_types_enable_router_and_multi_model_off_removes_cascade():
-    assert "router" in ok_and_out(request_types=4)[0]
+    assert "router" in ok_and_out(request_types=4, needs_tools=True, task_type="tool_actions")[0]
     ok, why = ok_and_out(multi_model=False)
     assert "cascade" not in ok and "multi-model" in why["cascade"]
 
@@ -67,3 +67,28 @@ def test_tool_definitions_counted_and_tool_search_kicks_in():
 def test_decision_trace_cites_sources():
     trace = advisor.decision_trace(make_spec(SUPPORT))
     assert trace and all(t["sources"] and t["rule"] for t in trace)
+
+
+def test_labels_dropped_when_expected_answers_are_not_labels():
+    """Regression (live run): labels on a multi-field extraction forced one-word answers and 0% accuracy."""
+    s = make_spec(task_type="extraction", labels=["refund", "exchange", "cancellation"],
+                  test_cases=[{"input": f"email {i}", "expected": f"order_number: {i}; action: refund"} for i in range(8)])
+    assert s["labels"] == [] and any("dropped" in a for a in s["assumptions"])
+    keep = make_spec(labels=["billing", "sales"], test_cases=[{"input": "a", "expected": "billing"}, {"input": "b", "expected": "sales"}])
+    assert keep["labels"] == ["billing", "sales"]
+
+
+def test_router_not_used_for_single_step_label_or_question_tasks():
+    ok, why = ok_and_out(task_type="classification", request_types=4)
+    assert "router" not in ok and "one step" in why["router"]
+    assert "router" in ok_and_out(task_type="tool_actions", needs_tools=True, request_types=4)[0]
+
+
+def test_every_test_prompt_states_the_task_and_field_format():
+    """Regression (live report): extraction prompts lacked the task, so models replied to the email instead."""
+    s = make_spec("Extract the order number and requested action from support emails", task_type="extraction", labels=[],
+                  test_cases=[{"input": "Hi, order 58234 arrived broken, refund please", "expected": "order_number: 58234; action: refund"},
+                              {"input": "Where is my parcel?", "expected": "order_number: unknown; action: status"}])
+    items = advisor.items_for(s)
+    assert items[0]["input"].startswith("Task: Extract the order number")
+    assert "order_number: ...; action: ..." in items[0]["input"] and "Hi, order 58234" in items[0]["input"]

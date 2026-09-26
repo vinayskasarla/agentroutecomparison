@@ -17,3 +17,4 @@ __pycache__/
 crash.log
 dump.rdb
 venv/
+reports/

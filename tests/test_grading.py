@@ -60,3 +60,19 @@ def test_judge_is_deterministic_and_cached(monkeypatch):
     v2, u2 = asyncio.run(grading.judge("q", ["full refund"], "All your money back!"))
     assert v1 is True and v2 is True and u1 and u2 is None  # second answer normalises to the same -> cached
     assert len(calls) == 1 and calls[0]["extra_body"] == {"temperature": 0} and calls[0]["model"] == grading.JUDGE_MODEL
+
+
+def test_multi_field_answers_graded_field_by_field():
+    """Regression (live run 2026-09-26): an extraction goal scored 0% because field lists weren't understood."""
+    item = {"accept": ["order_number: 58234-A; action: cancellation"]}
+    assert grading.grade_item("Order 58234-A — the customer wants a cancellation.", item)[0:2] == (True, "fields")
+    assert grading.grade_item("Order 58234-A, refund please", item)[0] is False
+    none = {"accept": ["order_number: unknown; action: complaint"]}
+    assert grading.grade_item('{"order_number": null, "action": "complaint"}', none)[0]
+
+
+def test_field_list_written_with_pipes_is_one_answer():
+    import app
+    item = app.normalize_items([{"input": "x", "expected": "order_number: 1; action: refund"},
+                                {"input": "y", "expected": "order_number: 7 | action: exchange"}])
+    assert item[1]["accept"] == ["order_number: 7; action: exchange"]

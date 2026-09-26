@@ -6,7 +6,7 @@ import sys
 for k in list(os.environ):
     if k.startswith(("AWS_", "AZURE_", "GOOGLE_")) or k.endswith("_API_KEY") or k in ("ANTHROPIC_AUTH_TOKEN",):
         del os.environ[k]
-os.environ.update(PRICE_SYNC="off", AWS_EC2_METADATA_DISABLED="true", AWS_CONFIG_FILE="/dev/null",
+os.environ.update(ENV_FILE="/nonexistent/.env", PRICE_SYNC="off", AWS_EC2_METADATA_DISABLED="true", AWS_CONFIG_FILE="/dev/null",
                   AWS_SHARED_CREDENTIALS_FILE="/dev/null", AUDIT_LOG="off")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

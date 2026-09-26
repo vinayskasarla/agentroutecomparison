@@ -24,6 +24,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import envfile  # noqa: F401  (loads .env before anything reads the environment)
 import catalog
 import advisor
 import constraints
@@ -427,7 +428,12 @@ def normalize_items(raw):
             continue
         options = [str(o).strip() for o in (r.get("options") or []) if str(o).strip()] or None
         unanswerable = expected.lower() in catalog.UNKNOWN_ANSWERS
-        accept = (catalog.UNKNOWN_ANSWERS if unanswerable else [a.strip() for a in expected.split("|") if a.strip()]) or None
+        # "|" separates alternative answers, unless the expected answer is a field list ("a: x | b: y"),
+        # which older specs wrote with "|": then it's one answer with several fields.
+        alts = [a.strip() for a in expected.split("|") if a.strip()]
+        if len(alts) > 1 and all(re.match(r"^[\w .-]{1,40}?\s*[:=]", a) for a in alts):
+            alts = ["; ".join(alts)]
+        accept = (catalog.UNKNOWN_ANSWERS if unanswerable else alts) or None
         prompt = text + (f"\n\nAnswer with exactly one of: {', '.join(options)}." if options else "")
         if unanswerable or (accept and r.get("grounded")):
             difficulty = 3 if unanswerable else 2
