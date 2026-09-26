@@ -630,22 +630,27 @@ def choose_from_table(table, first, spec=None):
     platform you have a spend commitment with wins if it's within 15%).
     Fallback: the cheapest qualifying model on a different platform, so an outage of one doesn't take both down."""
     tested = [r for r in table if r["tested"]]
+    all_good = [r for r in tested if r["meets"]]
+    live = [r for r in tested if r["mode"] == "live"]
     # Prefer rows measured live over simulated ones whenever any live row qualifies.
-    if any(r["meets"] and r["mode"] == "live" for r in tested):
-        tested = [r for r in tested if r["mode"] == "live"]
+    if any(r["meets"] for r in live):
+        tested = live
     good = [r for r in tested if r["meets"]]
     pool = [r for r in good if r["status"] == "verified"] or good
-    primary = pool[0] if pool else max(tested, key=lambda r: (r["accuracy"] or 0, -(r["halluc"] or 0), -r["monthly"]))
+    # If nothing qualifies, the closest one must come from real measurements when there are any.
+    primary = pool[0] if pool else max(live or tested, key=lambda r: (r["accuracy"] or 0, -(r["halluc"] or 0), -r["monthly"]))
     commit = spec and spec.get("commitment")
     if pool and commit and primary["platform"] != commit:
         on = [r for r in pool if r["platform"] == commit]
         if on and on[0]["monthly"] <= primary["monthly"] * 1.15:
             primary = on[0]
-    others = [r for r in good if r["platform"] != primary["platform"]]
+    # Fallback: qualifying on another platform, live-measured first, else qualifying in simulation.
+    others = [r for r in good if r["platform"] != primary["platform"]] or [r for r in all_good if r["platform"] != primary["platform"]]
     others = ([r for r in others if r["status"] == "verified" and r["maker"] != primary["maker"]]
               or [r for r in others if r["status"] == "verified"] or others)
     if not others:
-        others = sorted([r for r in tested if r["platform"] != primary["platform"]],
+        others = sorted([r for r in (live if not pool and live else tested) if r["platform"] != primary["platform"]]
+                        or [r for r in tested if r["platform"] != primary["platform"]],
                         key=lambda r: (-(r["accuracy"] or 0), r["monthly"]))
     return primary["id"], (others[0]["id"] if others else None), [r["id"] for r in good]
 
@@ -683,8 +688,10 @@ def rank_designs(spec, res, jev, mode=None, jev_blocked=False):
         if not any(r["tested"] for r in table):
             continue
         primary, fallback, good = choose_from_table(table, probe, spec)
+        live_ok = [r for r in table if r["tested"] and r["meets"] and r["mode"] == "live"]
         d = build_design(arch, {**base, "primary": primary, "fallback": fallback}, "value", res, jev, spec)
         d["_table"], d["_good"], d["_cheaper"] = table, good, cheaper_unverified(table, primary)
+        d["_live_ok"] = len(live_ok)
         designs.append(d)
     score_designs(designs, spec)
     designs.sort(key=lambda d: (not d["passes"], -d["score"]))
@@ -694,7 +701,7 @@ def rank_designs(spec, res, jev, mode=None, jev_blocked=False):
         first = top[0]
         table = first["_table"]
         picks.update(primary=first["models"]["primary"], fallback=first["models"]["fallback"], qualifying=first["_good"],
-                     cheaper_unverified=first["_cheaper"])
+                     cheaper_unverified=first["_cheaper"], live_qualified=first["_live_ok"])
         prim = next(r for r in table if r["id"] == first["models"]["primary"])
         # Cheaper models that missed only on accuracy/hallucinations, but where the 95% range still reaches the
         # target: more test cases could make them qualify. And qualifying models the winner isn't clearly better than.
@@ -710,7 +717,7 @@ def rank_designs(spec, res, jev, mode=None, jev_blocked=False):
             fbd = build_design(first["arch"], {**first["models"], "primary": first["models"]["fallback"]}, "fallback", res, jev, spec)
             picks["fallback_design"] = {k: fbd[k] for k in ("accuracy", "right", "n", "halluc", "p95_ms", "monthly", "cost_per_req", "passes", "acc_lo", "acc_hi")}
     for d in designs:
-        for k in ("_table", "_good", "_cheaper"):
+        for k in ("_table", "_good", "_cheaper", "_live_ok"):
             d.pop(k, None)
     explain(top, spec, picks)
     system = system_design(top[0], spec) if top else None
