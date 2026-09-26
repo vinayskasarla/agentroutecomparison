@@ -134,31 +134,34 @@
   </section>
 
   <section id="results" class="hidden">
-    <!-- 1. The verdict: what to build, and how it scores against your targets -->
+    <!-- 1. The picks at a glance: models on the left, architecture on the right -->
+    <div class="picks" id="picks"></div>
+
+    <!-- 2. Build X on Y: how the pick scores against your targets -->
     <section class="verdict" id="verdict" aria-label="Recommendation"></section>
 
-    <!-- 2. Every option worth considering, in one aligned table -->
+    <!-- 3. The suggested architecture in detail -->
+    <section class="card archcard" id="howCard">
+      <div class="cardhead"><div><h2>Suggested architecture design details</h2><p class="hint" id="howHint" style="margin:0"></p></div></div>
+      <div id="how"></div>
+    </section>
+
+    <!-- 4. Every option worth considering, in one aligned table -->
     <section class="card" id="optionsCard">
       <div class="cardhead"><div><h2>Your options, side by side</h2><p class="hint" id="optHint" style="margin:0"></p></div></div>
       <div id="options"></div>
     </section>
 
-    <!-- 3. How the recommended design works -->
-    <section class="card" id="howCard">
-      <div class="cardhead"><div><h2>How the recommended design works</h2><p class="hint" id="howHint" style="margin:0"></p></div></div>
-      <div id="how"></div>
-    </section>
-
-    <!-- 4. What to check before relying on it -->
+    <!-- 5. What to check before relying on it -->
     <section class="card caveats" id="caveatsCard">
       <div class="cardhead"><div><h2>Before you rely on this</h2><p class="hint" style="margin:0">What the numbers can't tell you yet, and how to close each gap.</p></div></div>
       <ul class="cav" id="caveats"></ul>
     </section>
 
-    <!-- 5. Everything else, one topic at a time -->
+    <!-- 6. Everything else, one topic at a time -->
     <h2 class="sectiontitle">Details</h2>
     <nav class="rtabs" id="rtabs" role="tablist">
-      <button role="tab" data-tab="why" class="on">Design details</button>
+      <button role="tab" data-tab="why" class="on">How it was decided</button>
       <button role="tab" data-tab="models">All models</button>
       <button role="tab" data-tab="cost">Cost</button>
       <button role="tab" data-tab="cases">Test cases</button>
@@ -177,7 +180,6 @@
       <ul class="robust" id="robust"></ul>
     </section>
 
-      <section class="card"><h2>How to build it</h2><div id="build" style="margin-top:6px"></div></section>
     </div>
 
     <div class="tabpanel hidden" data-tab="models">
@@ -591,7 +593,7 @@ function modelName(id) { return id === "jev" ? "Jev" : `${mlabel(id)}${mplat(id)
 
 function render() {
   $("#results").classList.remove("hidden");
-  PAGE = 1; loadQuota(); renderCacheBar(); renderBrief(); renderVerdict(); renderOptions(); renderHow(); renderCaveats(); showBrief(true); renderSystem(); renderRobust(); renderPlatforms(); renderTable(); renderDetails(); renderHarness(); renderDecision(); renderCost();
+  PAGE = 1; loadQuota(); renderCacheBar(); renderBrief(); renderPicks(); renderVerdict(); renderOptions(); renderHow(); renderCaveats(); showBrief(true); renderSystem(); renderRobust(); renderPlatforms(); renderTable(); renderDetails(); renderHarness(); renderDecision(); renderCost();
   let tab = "why"; try { tab = sessionStorage.getItem("advisorTab") || "why"; } catch (e) {}
   showTab(tab);
 }
@@ -668,7 +670,7 @@ function renderVerdict() {
   el.innerHTML = `
     <div class="v-top">${status}<span class="v-ev" data-tip="${esc(st[2])}">Evidence: <b>${st[0]}</b> · ${d.n} test cases${g.judge ? ` · ${g.judge} checked by a judge model` : ""} · ${ADV.live_count ? `${ADV.live_count} of ${ADV.evaluated_models.length} models measured live` : "simulated"}</span></div>
     <h2 class="v-head">Build <span class="v-arch">${esc(d.name)}</span> on <span class="v-model">${esc(modelName(p.primary))}</span></h2>
-    <p class="v-sub">${p.fallback ? `Fallback if it's unavailable: <b>${esc(modelName(p.fallback))}</b>${fr && fr.mode !== "live" ? ` <span class="tag warn">not measured live</span>` : ""}${fr && !fr.meets ? ` <span class="tag">misses ${esc(andList(missText(fr.checks)))}</span>` : ""}` : "No model on another platform can serve as a fallback."}${r.mode && r.mode !== "live" ? ` <span class="tag warn">recommended model simulated</span>` : ""}</p>
+    <p class="v-sub">How the recommended design scores against your targets at ${SPEC.requests_per_day.toLocaleString()} requests a day${r.mode && r.mode !== "live" ? ` <span class="tag warn">recommended model simulated</span>` : ""}.</p>
     <div class="kpis">${kpis.join("")}</div>`;
 }
 
@@ -736,31 +738,98 @@ function whyModelOnly() {
   return live.length > 1 ? `Cheapest of ${live.length} models that met every target when measured live.` : good.length > 1 ? `Cheapest of ${good.length} models that met every target.` : "The only model tested that met every target.";
 }
 
+function renderPicks() {
+  const d = ADV.top[0], p = ADV.models, el = $("#picks");
+  if (!d) { el.innerHTML = ""; return; }
+  const r = row(p.primary) || {}, fr = p.fallback ? row(p.fallback) : null, i = info(p.primary), fi = p.fallback ? info(p.fallback) : {};
+  const meas = (x) => x && x.mode === "live" ? `<span class="st ok"><i>●</i>Measured live</span>` : `<span class="st unsure"><i>◌</i>Simulated</span>`;
+  const price = (m) => m.in != null ? `$${m.in} / $${m.out} per 1M tokens` : "";
+  const nFit = ADV.top.length, nAll = nFit + Object.keys(ADV.not_applicable || {}).length;
+  el.innerHTML = `
+    <section class="pick models" aria-label="Models">
+      <div class="pick-half">
+        <div class="pick-k"><span class="pk-dot win"></span>Winner model</div>
+        <div class="pick-name">${esc(i.label || p.primary)}</div>
+        <div class="pick-meta">${esc(i.maker || "")} · ${esc(i.platform || "")}</div>
+        <div class="pick-meta">${price(i)}</div>
+        <div class="pick-foot">${meas(r)}${r.meets ? `<span class="st ok"><i>✓</i>Meets targets</span>` : `<span class="st bad"><i>✗</i>Misses ${esc(andList(missText(r.checks || [])))}</span>`}</div>
+      </div>
+      <div class="pick-half">
+        <div class="pick-k"><span class="pk-dot fb"></span>Fallback model</div>
+        ${fr ? `<div class="pick-name">${esc(fi.label || p.fallback)}</div>
+        <div class="pick-meta">${esc(fi.maker || "")} · ${esc(fi.platform || "")}</div>
+        <div class="pick-meta">Takes over if the winner is down; another platform, so one outage can't stop both.</div>
+        <div class="pick-foot">${meas(fr)}${fr.meets ? `<span class="st ok"><i>✓</i>Meets targets</span>` : `<span class="st bad"><i>✗</i>Misses ${esc(andList(missText(fr.checks)))}</span>`}</div>`
+        : `<div class="pick-meta">No model on another platform was tested. Compare all models to find one.</div>`}
+      </div>
+    </section>
+    <section class="pick arch" aria-label="Suggested architecture">
+      <div class="pick-k"><span class="pk-dot arch"></span>Suggested architecture</div>
+      <div class="pick-name">${esc(d.name)}</div>
+      <div class="pick-meta">${esc(d.what)}</div>
+      <div class="mini-flow">${flowSteps(d).map((x) => `<span class="mf ${x.kind}">${esc(x.name)}</span>`).join('<span class="mf-arrow">→</span>')}</div>
+      <div class="pick-foot"><span class="hint">Best of ${nFit} pattern${nFit > 1 ? "s" : ""} that fit (${nAll} considered) · build ${d.build_weeks[0]}–${d.build_weeks[1]} engineer-weeks</span></div>
+    </section>`;
+}
+
+// One step of the request path: its name, a short line on what it does, and what kind of step it is.
+const STEP_NOTE = [
+  [/^App$/, "your service receives the request"], [/^Queue$/, "requests wait for the next batch"],
+  [/AI Gateway/, "keys, routing, retries and cost tracking"], [/Agent Runtime/, "runs the agent loop with step limits"],
+  [/^Search your documents/, "hybrid search finds the relevant passages"], [/^Batch API/, "the provider's discounted batch endpoint"],
+  [/Human approval/, "a person confirms irreversible actions"], [/Results store/, "results saved for the morning"],
+  [/^Check$/, "validates the result before it's used"], [/Classify/, "picks the right handler"],
+];
+const CONTROL_NOTE = { input_guard: "blocks prompt injection and off-topic requests", grounding: "confirms the answer is backed by the sources", output_check: "checks the format; retries once if it fails" };
+function stepModel(d, name) {
+  if (/Jev/.test(name)) return "Jev";
+  if (/small|Router/i.test(name) && d.models.small) return mlabel(d.models.small);
+  if (/LLM|agent|handler|Writer|Reviewer|Orchestrator|workers/i.test(name)) return mlabel(d.models.primary);
+  return "";
+}
+function flowSteps(d) {
+  const has = (id) => d.harness && d.harness.controls.some((c) => c.id === id);
+  const steps = [];
+  if (has("input_guard")) steps.push({ name: "Input guardrail", note: CONTROL_NOTE.input_guard, kind: "ctl" });
+  d.flow.forEach((f) => {
+    const m = stepModel(d, f), note = (STEP_NOTE.find(([re]) => re.test(f)) || [])[1];
+    steps.push({ name: f, note: m ? `model: ${m}` : note || "", kind: m ? "llm" : "sys" });
+  });
+  if (has("grounding")) steps.push({ name: "Grounding check", note: CONTROL_NOTE.grounding, kind: "ctl" });
+  if (has("output_check")) steps.push({ name: "Output check", note: CONTROL_NOTE.output_check, kind: "ctl" });
+  return steps;
+}
+
 function renderHow() {
   const d = ADV.top[0], p = ADV.models;
   if (!d) { $("#howCard").classList.add("hidden"); return; }
   $("#howCard").classList.remove("hidden");
-  $("#howHint").textContent = d.what;
-  // Only the reasons not already shown as numbers above: the pattern's rationale and the goal facts that chose it.
+  $("#howHint").textContent = `${d.name}: ${d.what}`;
+  // Only reasons not already shown as numbers: the pattern's rationale and the goal facts that chose it.
   const skip = /^(About \$|Includes a production harness|No design met|Meets all|\d+ of \d+ test cases correct|Why not the cheaper|You put |Plus about|Prompt caching covers)|(the most accurate model tested|the cheapest model that meets|meets every requirement in this architecture)/;
   const why = d.why.filter((w) => !skip.test(w)).map(esc)
     .concat(((ADV.system && ADV.system.trace) || []).filter((t) => (t.effects || []).some((e) => e.rank === 1)).slice(0, 3)
       .map((t) => `<b>${esc(t.fact)}</b> — ${esc(t.rule)}`));
-  const facts = [
-    ["Build effort", `${d.build_weeks[0]}–${d.build_weeks[1]} engineer-weeks${d.build_usd ? ` (about ${fmt$(d.build_usd[0])}–${fmt$(d.build_usd[1])})` : ""}`],
-    d.infra_monthly ? ["Fixed infrastructure", `${fmt$(d.infra_monthly)}/month · ${esc(d.infra.filter((i) => i.monthly).map((i) => i.name.toLowerCase()).join(", "))}`] : null,
-    d.harness ? ["Production controls", `${d.harness.controls.length} controls · ${fmt$(d.harness.monthly)}/month · adds ${dur(d.harness.ms)} (estimate)`] : null,
-    ["Busiest minute", `${Math.round(d.peak.rpm)} requests · ${tok(d.peak.tpm)} tokens${d.peak.quota ? (d.peak.over.length ? " · over your quota" : " · within quota") : ""}`],
-    ["Prompt size", `about ${tok(d.tokens_per_call)} tokens per call${d.cached_share >= 0.05 ? ` · ${pct(d.cached_share)} cached` : ""}`],
-    p.committed ? ["Commitment", `On your ${esc(SPEC.commitment)} spend commitment`] : null,
+  const steps = flowSteps(d);
+  const stats = [
+    ["Build effort", `${d.build_weeks[0]}–${d.build_weeks[1]} wks`, d.build_usd ? `about ${fmt$(d.build_usd[0])}–${fmt$(d.build_usd[1])}` : "engineer-weeks to first release"],
+    d.harness ? ["Production controls", fmt$(d.harness.monthly) + "/mo", `${d.harness.controls.length} controls · adds ${dur(d.harness.ms)}`] : null,
+    ["Fixed infrastructure", d.infra_monthly ? fmt$(d.infra_monthly) + "/mo" : "None", d.infra_monthly ? d.infra.filter((i) => i.monthly).map((i) => i.name.toLowerCase()).join(", ") : "nothing extra to run"],
+    ["Busiest minute", `${Math.round(d.peak.rpm)} req`, `${tok(d.peak.tpm)} tokens${d.peak.quota ? (d.peak.over.length ? " · over quota" : " · within quota") : ""}`],
+    ["Prompt size", `${tok(d.tokens_per_call)} tokens`, d.cached_share >= 0.05 ? `per call · ${pct(d.cached_share)} cached` : "per call"],
   ].filter(Boolean);
-  $("#how").innerHTML = `<h3 class="h3" style="margin-top:12px">What happens on each request</h3>${chainHtml(d)}
-    <p class="how-roles">${roleLine(d)}</p>
+  const build = BUILD[d.arch] || [];
+  $("#how").innerHTML = `
+    <div class="flow-k">What happens on each request</div>
+    <ol class="flow">${steps.map((x, i) => `<li class="fs ${x.kind}"><span class="fs-n">${i + 1}</span><div><div class="fs-name">${x.kind === "ctl" ? "🛡 " : ""}${esc(x.name)}</div>${x.note ? `<div class="fs-note">${esc(x.note)}</div>` : ""}</div></li>`).join("")}</ol>
+    <div class="flow-legend"><span><i class="lg llm"></i>model call</span><span><i class="lg sys"></i>your system</span>${d.harness ? `<span><i class="lg ctl"></i>production control</span>` : ""}</div>
+    <div class="astats">${stats.map(([k, v, s2]) => `<div class="astat"><div class="astat-k">${k}</div><div class="astat-v">${v}</div><div class="astat-s">${esc(s2)}</div></div>`).join("")}</div>
     <div class="how-grid">
-    <div><h3 class="h3">What it takes</h3><dl class="dl">${facts.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl></div>
-    <div><h3 class="h3">Why this design</h3><ul class="why-list">${why.map((w) => `<li>${w}</li>`).join("")}</ul>
-      <p class="hint" style="margin:8px 0 0"><span class="ev ${EV[d.evidence][1]}" data-tip="${esc(EV[d.evidence][2])}">${EV[d.evidence][0]}</span>${d.sources && d.sources.length ? ` · guidance: ${srcLinks(d.sources)}` : ""}</p></div>
-  </div>`;
+      <div class="panel"><h3 class="h3">Why this design</h3><ul class="why-list">${why.map((w) => `<li>${w}</li>`).join("")}</ul>
+        <p class="hint" style="margin:10px 0 0"><span class="ev ${EV[d.evidence][1]}" data-tip="${esc(EV[d.evidence][2])}">${EV[d.evidence][0]}</span>${d.sources && d.sources.length ? ` · guidance: ${srcLinks(d.sources)}` : ""}</p></div>
+      <div class="panel"><h3 class="h3">How to build it</h3><ol class="build-list">${build.map((b) => `<li>${esc(b)}</li>`).join("")}${d.addons.map((a) => `<li>Add <b>${esc(a.name)}</b>: ${esc(a.why)}.</li>`).join("")}${p.fallback ? `<li>Configure <b>${esc(modelName(p.fallback))}</b> as the fallback in the AI Gateway.</li>` : ""}</ol>
+        ${d.components ? `<p class="hint" style="margin:8px 0 0">Components: ${d.components.map(esc).join(" · ")}</p>` : ""}</div>
+    </div>`;
 }
 
 function yn(v) { return v === true ? "yes" : v === false ? "no" : String(v); }
@@ -948,11 +1017,6 @@ function renderDetails() {
   $("#assumptions").innerHTML = (SRC.source === "claude" ? `<li>Read and test cases written by ${esc(SRC.architect_model)}.</li>` : SRC.source === "edited" ? "<li>Your adjusted settings.</li>" : "") +
     notes.map((a) => `<li>${esc(a)}</li>`).join("");
   fillAdjust();
-  const d = ADV.top[0];
-  $("#build").innerHTML = `<ol class="steps-ol">${(BUILD[d.arch] || []).map((x) => `<li>${esc(x)}</li>`).join("")}${d.addons.map((a) => `<li>Add <b>${esc(a.name)}</b>: ${esc(a.why)}.</li>`).join("")}
-    ${d.harness ? d.harness.controls.map((c) => `<li>Harness: <b>${esc(c.name)}</b> — ${esc(c.what)}</li>`).join("") : ""}
-    <li>Configure <b>${esc(modelName(ADV.models.fallback))}</b> as the fallback in the AI Gateway.</li></ol>
-    ${d.components ? `<p class="hint">Components: ${d.components.map(esc).join(" · ")}</p>` : ""}`;
   const ex = ADV.excluded_models || [];
   $("#exShort").textContent = `· ${ex.length}`;
   const g = ADV.grading || {};
