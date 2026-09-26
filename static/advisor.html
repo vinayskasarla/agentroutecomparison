@@ -142,7 +142,7 @@
 
     <!-- 3. The suggested architecture in detail -->
     <section class="card archcard" id="howCard">
-      <div class="cardhead"><div><h2>Suggested architecture design details</h2><p class="hint" id="howHint" style="margin:0"></p></div></div>
+      <p class="hint hidden" id="howHint"></p>
       <div id="how"></div>
     </section>
 
@@ -758,6 +758,14 @@ function renderPicks() {
   const nums = (xs) => `<div class="pn">${xs.map(([v, k, cls]) => `<div class="pn-i ${cls || ""}"><div class="pn-v">${v}</div><div class="pn-k">${k}</div></div>`).join("")}</div>`;
   const status = d.passes ? `<span class="vstatus ok"><i>✓</i> Meets all your targets</span>` : `<span class="vstatus warn"><i>⚠</i> Closest option · misses ${esc(andList(missText(d.checks)))}</span>`;
   const g = ADV.grading || {};
+  // Alternative: the cheaper option when there is one, else the best other model tested in the same design.
+  const tested = ADV.model_table.filter((x) => x.tested && x.id !== p.primary && x.id !== p.fallback);
+  const c = p.cheaper_option && p.cheaper_option.id !== p.fallback ? row(p.cheaper_option.id) : null;
+  const alt = c || tested.slice().sort((x, y) => (y.meets - x.meets) || ((y.mode === "live") - (x.mode === "live")) || ((y.accuracy || 0) - (x.accuracy || 0)) || (x.monthly - y.monthly))[0];
+  const ai = alt ? info(alt.id) : {};
+  const altShort = !alt ? "" : alt.monthly < d.monthly ? `${fmt$(d.monthly - alt.monthly)}/mo cheaper` : `${fmt$(alt.monthly - d.monthly)}/mo more`;
+  const altWhy = !alt ? "" : alt.meets ? `Also meets every target, at ${altShort}. Not the pick because the winner ${alt.monthly < d.monthly ? "scores better on accuracy or speed" : "is cheaper"}.`
+    : `${altShort}, but misses ${andList(missText(alt.checks))}.`;
   el.innerHTML = `
     <div class="dec-head"><div class="dec-title">Recommendation</div>${status}
       <span class="dec-ev" data-tip="${esc(st[2])}">Evidence <b>${st[0]}</b> · ${d.n} test cases · ${ADV.live_count || 0}/${ADV.evaluated_models.length} models live${g.judge ? ` · ${g.judge} judge-checked` : ""}</span></div>
@@ -776,15 +784,14 @@ function renderPicks() {
         ${nums([[fmt$(fd.monthly), "per month"], [pct(fd.accuracy), "accuracy"], [dur(fd.p95_ms), "95% within"]])}
         <div class="pick-foot">${badge(fr)}${meets(fr)}</div>` : `<div class="pick-meta">None on another platform was tested.</div>`}
       </article>
-      <article class="pick arch">
-        <div class="pick-k">◆ Suggested architecture</div>
-        <div class="pick-name">${esc(d.name)}</div>
-        <div class="pick-meta" data-tip="${esc(d.what)}">${esc(d.what.split(/[.;,]/)[0])}</div>
-        ${nums([[`${d.build_weeks[0]}–${d.build_weeks[1]} wks`, "to build"], [String(flowSteps(d).length), "steps / request"], [d.infra_monthly ? fmt$(d.infra_monthly) : "$0", "fixed infra / mo"]])}
-        <div class="pick-foot"><span class="pb ok">✓ Best of ${ADV.top.length} that fit</span><span class="pb" data-tip="Patterns ruled out are listed under Details → More, with the reason">${Object.keys(ADV.not_applicable || {}).length + ADV.top.length} checked</span></div>
+      <article class="pick alt">
+        <div class="pick-k">◇ Alternative model</div>
+        ${alt ? `<div class="pick-name">${esc(ai.label || alt.id)}</div>
+        <div class="pick-meta" data-tip="${esc(altWhy)}">${esc(ai.platform || "")} · ${esc(altShort)}</div>
+        ${nums([[fmt$(alt.monthly), "per month"], [pct(alt.accuracy), "accuracy"], [dur(alt.p95_ms), "95% within"]])}
+        <div class="pick-foot">${badge(alt)}${meets(alt)}</div>` : `<div class="pick-meta">Only two models were tested. Compare all models to see more.</div>`}
       </article>
-    </div>
-    ${cacheLine(d)}`;
+    </div>`;
 }
 function cacheLine(d) {
   const c = d.cache;
@@ -828,12 +835,15 @@ function renderHow() {
   const d = ADV.top[0], p = ADV.models;
   if (!d) { $("#howCard").classList.add("hidden"); return; }
   $("#howCard").classList.remove("hidden");
-  $("#howHint").textContent = `${d.name} · ${flowSteps(d).length} steps per request${d.harness ? ` · ${d.harness.controls.length} production controls` : ""}`;
+  $("#howHint").textContent = "";
+  const nAll = Object.keys(ADV.not_applicable || {}).length + ADV.top.length;
   // Only reasons not already shown as numbers: the pattern's rationale and the goal facts that chose it.
   const skip = /^(About \$|Includes a production harness|No design met|Meets all|\d+ of \d+ test cases correct|Why not the cheaper|You put |Plus about|Prompt caching covers)|(the most accurate model tested|the cheapest model that meets|meets every requirement in this architecture)/;
-  const why = d.why.filter((w) => !skip.test(w)).map(esc)
-    .concat(((ADV.system && ADV.system.trace) || []).filter((t) => (t.effects || []).some((e) => e.rank === 1)).slice(0, 3)
-      .map((t) => `<b>${esc(t.fact)}</b> — ${esc(t.rule)}`));
+  const base = d.why.filter((w) => !skip.test(w));
+  const key = (t) => t.toLowerCase().replace(/[^a-z ]/g, "").split(" ").slice(0, 4).join(" ");
+  const seen = new Set(base.map(key));
+  const why = base.map(esc).concat(((ADV.system && ADV.system.trace) || []).filter((t) => (t.effects || []).some((e) => e.rank === 1))
+    .filter((t) => !seen.has(key(t.rule)) && !seen.has(key(t.fact))).slice(0, 3).map((t) => `<b>${esc(t.fact)}</b> — ${esc(t.rule)}`));
   const steps = flowSteps(d);
   const stats = [
     ["Build effort", `${d.build_weeks[0]}–${d.build_weeks[1]} wks`, d.build_usd ? `about ${fmt$(d.build_usd[0])}–${fmt$(d.build_usd[1])}` : "engineer-weeks to first release"],
@@ -844,10 +854,18 @@ function renderHow() {
   ].filter(Boolean);
   const build = BUILD[d.arch] || [];
   $("#how").innerHTML = `
+    <div class="arch-hero">
+      <div class="ah-k">◆ Suggested architecture</div>
+      <div class="ah-name">${esc(d.name)}</div>
+      <div class="ah-what">${esc(d.what)}</div>
+      <div class="pick-foot" style="margin-top:8px"><span class="pb ok">✓ Best of ${ADV.top.length} that fit</span><span class="pb" data-tip="Patterns ruled out are listed under Details → More, with the reason">${nAll} patterns checked</span>
+        <span class="pb">${steps.length} steps per request</span>${d.harness ? `<span class="pb">${d.harness.controls.length} production controls</span>` : ""}</div>
+    </div>
+    <div class="astats">${stats.map(([k, v, s2]) => `<div class="astat"><div class="astat-k">${k}</div><div class="astat-v">${v}</div><div class="astat-s">${esc(s2)}</div></div>`).join("")}</div>
+    ${cacheLine(d)}
     <div class="flow-k">What happens on each request</div>
     <ol class="flow">${steps.map((x, i) => `<li class="fs ${x.kind}"><span class="fs-n">${i + 1}</span><div><div class="fs-name">${x.kind === "ctl" ? "🛡 " : ""}${esc(x.name)}</div>${x.note ? `<div class="fs-note">${esc(x.note)}</div>` : ""}</div></li>`).join("")}</ol>
     <div class="flow-legend"><span><i class="lg llm"></i>model call</span><span><i class="lg sys"></i>your system</span>${d.harness ? `<span><i class="lg ctl"></i>production control</span>` : ""}</div>
-    <div class="astats">${stats.map(([k, v, s2]) => `<div class="astat"><div class="astat-k">${k}</div><div class="astat-v">${v}</div><div class="astat-s">${esc(s2)}</div></div>`).join("")}</div>
     <div class="how-grid">
       <div class="panel"><h3 class="h3">Why this design</h3><ul class="why-list">${why.slice(0, 2).map((w) => `<li>${w}</li>`).join("")}</ul>
         <p class="hint" style="margin:10px 0 0"><span class="ev ${EV[d.evidence][1]}" data-tip="${esc(EV[d.evidence][2])}">${EV[d.evidence][0]}</span>${d.sources && d.sources.length ? ` · guidance: ${srcLinks(d.sources)}` : ""}</p></div>
@@ -915,7 +933,7 @@ function roleLine(d) {
   if (uniq.length <= 1) return `Model: <b>${esc(modelName(uniq[0] || d.models.primary))}</b>${roles.length > 1 ? " for every role" : ""}`;
   return roles.map((r) => `${esc(r.role)}: <b>${esc(r.model === "jev" ? "Jev" : mlabel(r.model))}</b>`).join(" · ");
 }
-function srcLinks(list) { return (list || []).map((x) => `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title.split(" — ")[0])}</a>`).join(", "); }
+function srcLinks(list) { return (list || []).filter((x, i, a) => a.findIndex((y) => y.title.split(" — ")[0] === x.title.split(" — ")[0]) === i).map((x) => `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title.split(" — ")[0])}</a>`).join(", "); }
 function renderSystem() {
   const sd = ADV.system, d = ADV.top[0];
   $("#sysCard").classList.toggle("hidden", !sd);
