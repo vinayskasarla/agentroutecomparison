@@ -219,9 +219,11 @@ Capabilities, caching rates, data rules and TCO figures are starting points mark
 
 Advice is computed on the fly. Nothing about a decision is stored per user, and there is no database.
 - **Decision record:** choosing *Accept* or *Choose differently* (with a reason and who decided) only affects the decision record you download.
-- **Result cache:** finished results stay in server memory for 24 hours (`ADVICE_CACHE_TTL`, up to `ADVICE_CACHE_MAX` = 200 results). The cache is keyed by the question, the constraints and a fingerprint of prices and policy.
-- **Reopening a result:** asking the same thing again, or opening the result link (`?r=…`), is instant. *Run it fresh* bypasses the cache.
-- **What clears it:** a restart or a price or policy change.
+- **Result cache:** results are kept per **browser session**. Asking the same thing again in the same browser session (or opening the result link, `?r=…`) is instant. A new browser session always gets a fresh run. The cache lives in server memory only, for at most `ADVICE_CACHE_TTL` (24 h) and `ADVICE_CACHE_MAX` (200) results, and a restart clears it. *Run it fresh* bypasses it. Note that browsers set to restore the previous session also restore its cookie.
+
+**Architect model:** reading the goal and writing test cases uses `ARCHITECT_MODEL` (default `claude-sonnet-5`) at `ARCHITECT_EFFORT` (default `medium`). On four sample goals, Sonnet 5 matched Opus 5's reading on 42 of 44 decisions for about $0.023 per goal vs $0.053. Set `ARCHITECT_MODEL=claude-opus-5` for the strongest reading.
+
+**Optional password:** set `APP_PASSWORD` to require HTTP basic auth (any username) until SSO is in front of the app.
 
 The audit trail in CloudWatch still records requests and actions as before.
 

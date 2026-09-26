@@ -20,7 +20,7 @@ import uuid
 
 import httpx
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -49,6 +49,26 @@ async def refresh_prices():
                 audit.log("prices_sync_failed", None, error=f"{type(exc).__name__}: {exc}")
         asyncio.create_task(run())
 PAGES = {"/": "advisor", "/ask": "ask", "/benchmark": "benchmark", "/news": "news"}
+
+
+APP_PASSWORD = os.environ.get("APP_PASSWORD")  # optional shared password until SSO sits in front of the app
+
+
+@app.middleware("http")
+async def password_gate(request: Request, call_next):
+    """HTTP basic auth when APP_PASSWORD is set (any username). Off by default; SSO replaces it in production."""
+    if APP_PASSWORD:
+        import base64, secrets
+        auth = request.headers.get("authorization", "")
+        ok = False
+        if auth.startswith("Basic "):
+            try:
+                ok = secrets.compare_digest(base64.b64decode(auth[6:]).decode().split(":", 1)[1], APP_PASSWORD)
+            except Exception:
+                ok = False
+        if not ok:
+            return Response("Password required", status_code=401, headers={"WWW-Authenticate": 'Basic realm="Architecture Advisor"'})
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -543,8 +563,9 @@ def _knowledge_version():
     return hashlib.sha256(blob.encode()).hexdigest()[:12]
 
 
-def _advice_key(req):
-    body = {"goal": " ".join(req.goal.lower().split()), "spec": req.spec, "harness": req.harness, "sim": req.force_sim, "mm": req.multi_model,
+def _advice_key(req, session_id=None):
+    # Scoped to the browser session: a new browser session always gets a fresh run; the same session reuses it.
+    body = {"sid": session_id, "goal": " ".join(req.goal.lower().split()), "spec": req.spec, "harness": req.harness, "sim": req.force_sim, "mm": req.multi_model,
             "constraints": req.constraints or {}, "k": _knowledge_version()}
     return hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()[:32]
 
@@ -579,7 +600,7 @@ async def api_advise(req: AdviseReq, request: Request):
     queue: asyncio.Queue = asyncio.Queue()
     started = time.perf_counter()
     audit.log("advise_requested", request, goal=req.goal, edited=bool(req.spec), force_sim=req.force_sim, harness=req.harness)
-    key = _advice_key(req)
+    key = _advice_key(req, request.state.session_id)
     hit = None if req.fresh else _cache_get(key)
     if hit:
         audit.log("advise_cache_hit", request, goal=req.goal, key=key)

@@ -15,7 +15,10 @@ import catalog
 import constraints
 import policy
 
-ARCHITECT_MODEL = os.environ.get("ARCHITECT_MODEL", "claude-opus-5")
+# Measured on 4 goals: Sonnet 5 at medium effort matched Opus 5's reading on 42 of 44 decisions at ~43% of the
+# cost ($0.023 vs $0.053 per goal). Set ARCHITECT_MODEL=claude-opus-5 for the strongest reading.
+ARCHITECT_MODEL = os.environ.get("ARCHITECT_MODEL", "claude-sonnet-5")
+ARCHITECT_EFFORT = os.environ.get("ARCHITECT_EFFORT", "medium")
 
 TASK_TYPES = ["classification", "extraction", "grounded_qa", "open_qa", "summarization", "generation",
               "tool_actions", "research", "conversation"]
@@ -160,7 +163,8 @@ async def spec_from_claude(goal: str) -> dict:
     resp = await client.messages.create(
         model=ARCHITECT_MODEL,
         max_tokens=16000,
-        output_config={"effort": "medium", "format": {"type": "json_schema", "schema": SPEC_SCHEMA}},
+        output_config={**({} if ARCHITECT_MODEL.startswith("claude-haiku") else {"effort": ARCHITECT_EFFORT}),
+                       "format": {"type": "json_schema", "schema": SPEC_SCHEMA}},
         messages=[{"role": "user", "content": ARCHITECT_PROMPT + goal}],
     )
     if resp.stop_reason == "refusal":
