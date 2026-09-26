@@ -18,7 +18,9 @@ CAPS = _load("capabilities.json")
 TCO = _load("tco.json")
 QUOTAS = _load("quotas.json")
 AGENTIC = _load("agentic.json")
-TOOL_ARCHS = ("tool_agent", "multi_agent", "router", "agentic_rag")  # the model sees tool definitions
+TOOL_ARCHS = ("tool_agent", "multi_agent", "router", "agentic_rag")
+CACHE_MIN_REPEAT = 0.15  # below this share of exact repeats, a response cache costs more than it saves
+NO_CACHE_ARCHS = ("batch", "tool_agent", "multi_agent")  # every request is fresh work (or already discounted)  # the model sees tool definitions
 
 # How many model calls one request makes in each architecture (for peak token load).
 CALLS = {"single_call": 1, "rag": 1, "long_context": 1, "batch": 1, "workflow": 2, "evaluator_optimizer": 3,
@@ -166,6 +168,8 @@ def tco(arch, spec, harness):
 def _applies(rule, arch, spec):
     if rule == "retrieval":  # any design that searches your documents (all but sending them whole)
         return spec["needs_documents"] and arch != "long_context"
+    if rule == "cache":  # exact-repeat answers served from a cache (the addon rule in advisor.addons_for)
+        return spec["repeat_rate"] >= CACHE_MIN_REPEAT and arch not in NO_CACHE_ARCHS
     if rule == "mcp":
         return spec["needs_tools"] and spec["integration"] != "direct" and arch in TOOL_ARCHS + ("workflow",)
     return arch in rule

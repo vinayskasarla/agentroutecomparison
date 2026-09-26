@@ -669,17 +669,19 @@ function renderVerdict() {
   const lmax = Math.max((lat ? lat.target : 0) * 1.15, d.p95_ms * 1.15);
   el.className = "verdict " + (d.passes ? "v-ok" : "v-warn");
   el.innerHTML = `
-    <div class="v-top"><h2 class="v-head2">Winner vs your targets</h2><span class="v-ev">${esc(d.name)} on ${esc(mlabel(p.primary))} · ${SPEC.requests_per_day.toLocaleString()} requests/day</span></div>
+    <div class="v-top"><div><h2 class="v-head2">Does ${esc(mlabel(p.primary))} meet your requirements?</h2>
+      <p class="hint" style="margin:2px 0 0">Blue bar = what it scored on your ${d.n} test cases. Black line = the requirement you set. ✓ met · ✗ not met.</p></div>
+      <span class="v-ev">${esc(d.name)} · ${SPEC.requests_per_day.toLocaleString()} requests/day</span></div>
     <div class="gauges">
       ${costCard}
       ${gauge("Accuracy", `${d.right} of ${d.n} test cases correct. Shaded: the likely range (95% confidence).`, pct(d.accuracy),
-        meter({ value: d.accuracy || 0, max: 1, target: acc && acc.target, lo: d.acc_lo, hi: d.acc_hi }), acc, acc ? `Target ≥ ${pct(acc.target)}` : "")}
+        meter({ value: d.accuracy || 0, max: 1, target: acc && acc.target, lo: d.acc_lo, hi: d.acc_hi }), acc, acc ? `You need ≥ ${pct(acc.target)}` : "")}
       ${gauge("Made-up answers", `${Math.round((d.halluc || 0) * d.n)} of ${d.n} answers stated something the source doesn't support.`, pct(d.halluc),
-        meter({ value: d.halluc || 0, max: hmax, target: hal && hal.target }), hal, hal ? `Limit ≤ ${pct(hal.target)}` : "")}
+        meter({ value: d.halluc || 0, max: hmax, target: hal && hal.target }), hal, hal ? `You allow ≤ ${pct(hal.target)}` : "")}
       ${gauge("Response time (95%)", "95 of 100 requests finish within this time. Ticks: median and 90%.", dur(d.p95_ms),
-        meter({ value: d.p95_ms, max: lmax, target: lat && lat.target, ticks: [{ v: d.p50_ms, short: "50%", label: `Median ${dur(d.p50_ms)}` }, { v: d.p90_ms, short: "90%", label: `90% within ${dur(d.p90_ms)}` }] }), lat, lat ? `Target ≤ ${dur(lat.target)}` : "")}
+        meter({ value: d.p95_ms, max: lmax, target: lat && lat.target, ticks: [{ v: d.p50_ms, short: "50%", label: `Median ${dur(d.p50_ms)}` }, { v: d.p90_ms, short: "90%", label: `90% within ${dur(d.p90_ms)}` }] }), lat, lat ? `You need ≤ ${dur(lat.target)}` : "")}
     </div>
-    <div class="g-legend"><span><i class="lg-fill"></i>measured</span><span><i class="lg-range"></i>likely range</span><span><i class="lg-target"></i>your target</span></div>`;
+    <div class="g-legend"><span><i class="lg-fill"></i>measured</span><span><i class="lg-range"></i>likely range</span><span><i class="lg-target"></i>your requirement</span></div>`;
 }
 
 function optRow(o) {
@@ -776,12 +778,22 @@ function renderPicks() {
       </article>
       <article class="pick arch">
         <div class="pick-k">◆ Suggested architecture</div>
-        <div class="pick-name" data-tip="${esc(d.what)}">${esc(d.name)}</div>
-        <div class="mini-flow">${flowSteps(d).filter((x) => x.kind !== "ctl").map((x) => `<span class="mf ${x.kind}">${esc(x.name)}</span>`).join('<span class="mf-arrow">→</span>')}</div>
-        ${nums([[`${d.build_weeks[0]}–${d.build_weeks[1]} wks`, "to build"], [d.harness ? String(d.harness.controls.length) : "0", "controls"], [d.infra_monthly ? fmt$(d.infra_monthly) : "$0", "infra / mo"]])}
-        <div class="pick-foot"><span class="pb">#1 of ${ADV.top.length} that fit</span><span class="pb">${Object.keys(ADV.not_applicable || {}).length + ADV.top.length} patterns checked</span></div>
+        <div class="pick-name">${esc(d.name)}</div>
+        <div class="pick-meta" data-tip="${esc(d.what)}">${esc(d.what.split(/[.;,]/)[0])}</div>
+        ${nums([[`${d.build_weeks[0]}–${d.build_weeks[1]} wks`, "to build"], [String(flowSteps(d).length), "steps / request"], [d.infra_monthly ? fmt$(d.infra_monthly) : "$0", "fixed infra / mo"]])}
+        <div class="pick-foot"><span class="pb ok">✓ Best of ${ADV.top.length} that fit</span><span class="pb" data-tip="Patterns ruled out are listed under Details → More, with the reason">${Object.keys(ADV.not_applicable || {}).length + ADV.top.length} checked</span></div>
       </article>
-    </div>`;
+    </div>
+    ${cacheLine(d)}`;
+}
+function cacheLine(d) {
+  const c = d.cache;
+  if (!c) return "";
+  if (!c.recommended) return `<div class="cache-line no"><span class="cl-k">Response cache (Redis)</span><span class="pb">Not needed</span><span class="cl-t">${esc(c.why)}</span></div>`;
+  return `<div class="cache-line"><span class="cl-k">⚡ Response cache (Redis)</span><span class="pb ok">Recommended</span>
+    <span class="cl-n" data-tip="An estimate from your goal, not measured. Set your real repeat rate under Details → Test cases → Adjust (Repeat requests) and re-run."><b>${pct(c.repeat_rate)}</b> of requests repeat <span class="est">(estimate)</span></span><span class="cl-n">saves <b>${fmt$(c.saves_monthly)}/mo</b> (${pct(c.saves_share)})</span>
+    <span class="cl-n">${c.reused ? "uses the cache you already run" : `costs <b>${fmt$(c.cost_monthly)}/mo</b>`}</span><span class="cl-n">repeats answered in milliseconds</span>
+    <span class="cl-t" data-tip="From the second time a question is asked, the stored answer is returned: no model call and no answer checks. Only exact repeats are cached, so a reworded question still goes to the model. The saving is already included in the monthly cost above.">ⓘ included in the cost above</span></div>`;
 }
 
 // One step of the request path: its name, a short line on what it does, and what kind of step it is.

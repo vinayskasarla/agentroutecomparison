@@ -695,6 +695,7 @@ def build_design(arch, models, variant, res, jev, spec):
         "escalation_rate": (sum(1 for r in rows if r.get("escalated")) / len(rows)) if rows and arch in ("cascade", "rag_cascade", "decision_model") else None,
     }
     d["total_monthly"] = d["monthly"] + d["infra_monthly"]
+    d["cache"] = cache_advice(arch, spec, d, m, harness, models, res, rows, raw, guard) if cache else cache_advice(arch, spec, d)
     d["calls_per_req"] = statistics.fmean(r.get("calls", 1) for r in rows) if rows else 1
     d["flow"] = flow_for(arch, spec, d["flow"])
     d["roles"] = roles_for(arch, d["models"], spec)
@@ -920,6 +921,28 @@ def robustness(spec, res, jev, mode, jev_blocked, base):
     return out
 
 
+def cache_advice(arch, spec, d, m=None, harness=None, models=None, res=None, rows=None, raw=None, guard=None):
+    """Whether a response cache (e.g. Redis) pays off here, and what it saves: repeated requests are answered from
+    the cache instead of the model (and skip the answer checks), so the saving is the model and check cost of that share."""
+    rate, vol = spec["repeat_rate"], spec["requests_per_day"] * 30
+    if m is None:
+        why = ("every request is fresh work (actions or research), so there is nothing to reuse" if arch in constraints.NO_CACHE_ARCHS[1:]
+               else "batch jobs are already discounted and run once" if arch == "batch"
+               else f"only about {round(rate * 100)}% of requests repeat exactly; a cache would cost more than it saves")
+        return {"recommended": False, "why": why, "repeat_rate": rate}
+    model_saved = m["cost_per_req"] * rate * vol
+    check_saved = 0.0
+    if harness:  # the same controls without the cache: the difference is what cached answers don't pay
+        full = harness_for(arch, models, res, rows, spec, raw, guard, 1.0)
+        check_saved = (full["cost_per_req"] - harness["cost_per_req"]) * vol
+    infra = next((i for i in d["infra"] if i["id"] == "cache"), None)
+    cost = infra["monthly"] if infra else 0.0
+    saved = model_saved + check_saved
+    return {"recommended": True, "repeat_rate": rate, "saves_monthly": saved, "cost_monthly": cost, "net_monthly": saved - cost,
+            "saves_share": saved / (d["monthly"] + saved) if d["monthly"] + saved else 0.0, "reused": bool(infra and infra["monthly"] == 0),
+            "why": f"about {round(rate * 100)}% of requests repeat an earlier one exactly; those are answered from the cache in milliseconds"}
+
+
 def addons_for(arch, spec):
     out = [{"id": "gateway", "name": "AI Gateway", "why": "central keys, quotas, cost tracking and provider failover",
             "ms": 5, "per_1k": 0.006}]
@@ -928,9 +951,9 @@ def addons_for(arch, spec):
     if arch in ("tool_agent", "workflow", "multi_agent") or spec["needs_memory"]:
         out.append({"id": "runtime", "name": "Agent Runtime", "why": "memory, tool permissions, tracing and policy",
                     "ms": 15, "per_1k": 0.012})
-    if spec["repeat_rate"] >= 0.15 and arch not in ("batch", "tool_agent", "multi_agent"):
+    if spec["repeat_rate"] >= constraints.CACHE_MIN_REPEAT and arch not in constraints.NO_CACHE_ARCHS:
         out.append({"id": "cache", "name": "Response cache",
-                    "why": f"about {round(spec['repeat_rate'] * 100)}% of requests repeat, and those skip the model", "ms": 0, "per_1k": 0.002})
+                    "why": f"about {round(spec['repeat_rate'] * 100)}% of requests repeat, and those skip the model", "ms": 0, "per_1k": 0})
     if spec["risk"] == "high":
         out.append({"id": "review", "name": "Human review", "why": "high-impact decisions below 80% confidence go to a person",
                     "ms": 0, "per_1k": 0})

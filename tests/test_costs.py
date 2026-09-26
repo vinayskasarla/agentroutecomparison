@@ -122,3 +122,18 @@ def test_cached_answers_are_not_grounding_checked_again():
     if any(a["id"] == "cache" for a in half["addons"]):
         assert abs(ctl(half, "grounding") - 0.5 * ctl(none, "grounding")) < 1e-12
         assert ctl(half, "input_guard") == ctl(none, "input_guard")  # every request is still screened
+
+
+def test_cache_advice_says_whether_it_pays_and_what_it_saves():
+    spec = make_spec("Answer customer questions from our help center docs. 20k a day.", harness=True, repeat_rate=0.3)
+    res = make_res({"claude-sonnet-5": 12, "claude-haiku-4-5": 12})
+    models = {"primary": "claude-sonnet-5", "small": "claude-haiku-4-5", "guard": "claude-haiku-4-5", "fallback": None}
+    on = advisor.build_design("rag", models, "x", res, None, spec)
+    c = on["cache"]
+    assert c["recommended"] and c["cost_monthly"] == 25 and c["saves_monthly"] > c["cost_monthly"]
+    off = advisor.build_design("rag", models, "x", res, None, {**spec, "repeat_rate": 0.0})
+    # with no repeats the whole saving disappears: the cached design is cheaper by about what the advice says
+    assert abs((off["monthly"] - on["monthly"]) - c["saves_monthly"]) / c["saves_monthly"] < 0.02
+    assert not advisor.build_design("rag", models, "x", res, None, {**spec, "repeat_rate": 0.05})["cache"]["recommended"]
+    agent = make_spec(task_type="tool_actions", needs_tools=True, repeat_rate=0.3)
+    assert "fresh work" in advisor.build_design("tool_agent", models, "x", res, None, agent)["cache"]["why"]

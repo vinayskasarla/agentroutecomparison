@@ -628,3 +628,16 @@ button.primary.big { font-size: 15.5px; padding: 11px 20px; }
 
 @media (max-width: 1000px) { .dec-grid { grid-template-columns: 1fr 1fr; } .dec-grid .pick.arch { grid-column: 1 / -1; } .gauges { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 600px) { .dec-grid { grid-template-columns: 1fr; } .gauges { grid-template-columns: 1fr; } .dec-ev { margin-left: 0; } .pick-name { font-size: 20px; } }
+
+/* architecture card as strong as the winner; cache line */
+.pick.arch { border: 2px solid var(--s3); }
+.pick.arch .pick-k { color: var(--s3); }
+.pick.fb { border: 1.5px solid color-mix(in srgb, var(--ink) 18%, transparent); }
+.cache-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-top: 12px; padding: 10px 14px; border-radius: 10px;
+  background: var(--surface); border: 1px solid var(--border); font-size: 13.5px; color: var(--ink-2); }
+.cache-line .cl-k { font-weight: 700; color: var(--ink); }
+.cache-line .cl-n b { color: var(--ink); }
+.cache-line .cl-t { color: var(--muted); font-size: 12.5px; cursor: help; margin-left: auto; }
+.cache-line.no .cl-t { margin-left: 0; cursor: default; }
+.v-top { align-items: flex-start; }
+.est { color: var(--muted); font-size: 12px; cursor: help; }

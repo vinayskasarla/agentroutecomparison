@@ -81,6 +81,13 @@
       "monthly_per_server": 20,
       "basis": "a small always-on container per MCP server you host yourself (vendor-hosted servers cost nothing here)",
       "source": "https://aws.amazon.com/apprunner/pricing/"
+    },
+    "cache": {
+      "name": "Response cache (Redis)",
+      "applies": "cache",
+      "monthly": 25,
+      "basis": "one small managed Redis node (e.g. Amazon ElastiCache cache.t4g.small at about $0.032/hour); holds millions of cached answers",
+      "source": "https://aws.amazon.com/elasticache/pricing/"
     }
   },
   "engineer_week_usd": null
