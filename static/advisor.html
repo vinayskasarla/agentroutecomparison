@@ -593,7 +593,7 @@ function renderHero() {
         <div class="badge-row"><span class="medal alt">↺ Fallback</span>${fbi ? statusBadge(fbi) : ""}</div>
         ${fbi ? `<div class="rname">${esc(fbi.label)}</div>
         <div class="wmeta">${esc(fbi.maker)} · <b>${esc(fbi.platform)}</b></div>
-        <div class="warch">Takes over if the winner is down or unavailable${row(p.fallback) && row(p.fallback).mode !== "live" ? ` · <span class="warn">${row(p.fallback).meets ? "qualified in simulation only" : "simulated, not measured live"}</span>` : ""}</div>
+        <div class="warch">Takes over if the winner is down or unavailable${row(p.fallback) && !row(p.fallback).meets ? ` · <span class="no">misses ${esc(row(p.fallback).checks.filter((c) => !c.pass).map((c) => c.label.toLowerCase()).join(", "))}: nothing on another platform met every requirement</span>` : ""}${row(p.fallback) && row(p.fallback).mode !== "live" ? ` · <span class="warn">${row(p.fallback).meets ? "qualified in simulation only" : "simulated, not measured live"}</span>` : ""}</div>
         <div class="tiles t2">
           ${tile("Per month", fmt$(fb.monthly), "")}${tile("Accuracy", pct(fb.accuracy), `${fb.right}/${fb.n} · likely ${range(fb)}`)}
           ${tile("95% within", dur(fb.p95_ms), "")}${tile("Per 1K correct", fb.accuracy ? fmt$(fb.cost_per_req * 1000 / fb.accuracy) : "—", "")}

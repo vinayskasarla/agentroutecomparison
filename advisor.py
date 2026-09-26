@@ -702,10 +702,9 @@ def choose_from_table(table, first, spec=None):
     others = [r for r in good if r["platform"] != primary["platform"]] or [r for r in all_good if r["platform"] != primary["platform"]]
     others = ([r for r in others if r["status"] == "verified" and r["maker"] != primary["maker"]]
               or [r for r in others if r["status"] == "verified"] or others)
-    if not others:
-        others = sorted([r for r in (live if not pool and live else tested) if r["platform"] != primary["platform"]]
-                        or [r for r in tested if r["platform"] != primary["platform"]],
-                        key=lambda r: (-(r["accuracy"] or 0), r["monthly"]))
+    if not others:  # nothing on another platform qualifies: still name the best one there (the page says it misses)
+        every = [r for r in table if r["tested"] and r["platform"] != primary["platform"]]
+        others = sorted([r for r in every if r["mode"] == "live"] or every, key=lambda r: (-(r["accuracy"] or 0), r["monthly"]))
     return primary["id"], (others[0]["id"] if others else None), [r["id"] for r in good]
 
 

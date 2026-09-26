@@ -42,3 +42,11 @@ def test_cheaper_unverified_is_reported_not_picked():
     t = [row("u", "P1", 5, status="needs_review"), row("v", "P2", 20)]
     assert advisor.choose_from_table(t, None)[0] == "v"
     assert advisor.cheaper_unverified(t, "v")["id"] == "u"
+
+
+def test_fallback_named_even_when_nothing_on_another_platform_qualifies():
+    """Regression (live run, 2026-09-26): no fallback was shown when the only other-platform model missed a limit."""
+    t = [row("a", "Anthropic API", 10), row("b", "Anthropic API", 20),
+         row("x", "Amazon Bedrock", 5, meets=False, mode="simulated", acc=0.93)]
+    primary, fallback, _ = advisor.choose_from_table(t, None)
+    assert primary == "a" and fallback == "x"
