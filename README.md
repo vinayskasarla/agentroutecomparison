@@ -81,7 +81,8 @@ Australia" produce a correct semantic-cache hit. If you lower the threshold to 0
 ## Run it
 
 ```bash
-cd llm-path-lab
+git clone https://github.com/vinayskasarla/agentroutecomparison.git && cd agentroutecomparison
+python3 -m venv .venv && source .venv/bin/activate   # Python 3.11+
 pip install -r requirements.txt
 redis-server --daemonize yes          # optional; falls back to an in-process cache
 export ANTHROPIC_API_KEY=...          # any of these enable live calls for that provider
