@@ -49,7 +49,21 @@
     </div>
   </section>
 
-  <section class="card goalcard">
+  <section class="card brief hidden" id="brief" aria-label="Your goal">
+    <div class="brief-main">
+      <div class="brief-k">Your goal</div>
+      <p class="brief-goal" id="briefGoal"></p>
+      <p class="brief-und" id="briefUnd"></p>
+      <div class="brief-chips" id="briefChips"></div>
+    </div>
+    <div class="brief-act">
+      <button class="ghost" id="editGoal">✎ Edit goal &amp; options</button>
+      <div class="brief-run hidden" id="briefRun"><span>Working on it…</span><div class="progress"><div id="bar2"></div></div></div>
+      <div class="cachebar" id="cachebar"></div>
+    </div>
+  </section>
+
+  <section class="card goalcard" id="goalcard">
     <label class="biglabel" for="goal">What should your agent do?</label>
     <textarea id="goal" class="askbox" placeholder="Describe it in a sentence or two, e.g. Route every support ticket to billing, technical, account or sales. About 50k a day, in real time."></textarea>
     <div class="examples" id="examples"></div>
@@ -61,6 +75,7 @@
     </div>
     <div class="runrow">
       <button class="primary big" id="go">Get recommendation</button>
+      <button class="linkbtn hidden" id="backRes">Back to results</button>
       <div class="opts">
         <label class="opt" data-tip="Adds the safety and quality controls a production agent needs (guardrails, output checks, limits, failover, tracing, evaluation) and includes their cost and delay in every number."><input type="checkbox" id="harness"> <span><b>Production-ready</b><small>include guardrails &amp; monitoring</small></span></label>
         <label class="opt" data-tip="Lets a cheaper model handle simple steps (routing, checking) while a stronger one decides. Untick to use one model everywhere, which is simpler to run."><input type="checkbox" id="multiModel" checked> <span><b>Mix models</b><small>cheaper model where it's enough</small></span></label>
@@ -89,6 +104,14 @@
       </div>
       <p class="hint" style="margin:8px 0 0">Models that can't take this data or region, or can't read images, are ruled out before testing. Data rules come from the company policy; things you already run are reused at no extra cost, and a platform you have a commitment with wins when it's within 15% of the cheapest.</p>
       </div>
+      <div id="tsBox">
+        <h3 class="h3" style="margin-top:16px">Test cases <span class="hint" style="font-weight:400">— for results that don't move between runs</span></h3>
+        <div class="runrow" style="margin-top:8px">
+          <label class="ghost filebtn">⬆ Use a saved test set<input type="file" id="tsFile" accept=".json,application/json,.csv,text/csv" hidden></label>
+          <span class="hint" id="tsOut">Leave empty to have about 40 test cases written for your goal. A saved set (JSON from “Save test set”, or a CSV with input, expected) is used exactly as is, so every run is graded on the same cases.</span>
+          <button class="linkbtn hidden" id="tsClear">Remove</button>
+        </div>
+      </div>
       <div id="agentBox">
         <h3 class="h3" style="margin-top:16px">Agent system <span class="hint" style="font-weight:400">— only if it calls tools or APIs</span></h3>
       <div class="reqs" style="margin-top:10px">
@@ -111,21 +134,31 @@
   </section>
 
   <section id="results" class="hidden">
-    <div class="cachebar" id="cachebar"></div>
-    <div class="confirm hidden" id="confirm"></div>
+    <!-- 1. The verdict: what to build, and how it scores against your targets -->
+    <section class="verdict" id="verdict" aria-label="Recommendation"></section>
 
-    <!-- 1. The answer in one sentence, then winner + fallback -->
-    <div class="tldr" id="answer"></div>
-    <section class="hero" id="hero"></section>
+    <!-- 2. Every option worth considering, in one aligned table -->
+    <section class="card" id="optionsCard">
+      <div class="cardhead"><div><h2>Your options, side by side</h2><p class="hint" id="optHint" style="margin:0"></p></div></div>
+      <div id="options"></div>
+    </section>
 
-    <!-- 2. Top 3 architectures -->
-    <h2 class="sectiontitle" id="archTitle">Top 3 architectures for this agent</h2>
-    <div class="hnote hidden" id="hnote"></div>
-    <div class="top3" id="top3"></div>
+    <!-- 3. How the recommended design works -->
+    <section class="card" id="howCard">
+      <div class="cardhead"><div><h2>How the recommended design works</h2><p class="hint" id="howHint" style="margin:0"></p></div></div>
+      <div id="how"></div>
+    </section>
 
-    <!-- 3. Everything else, one topic at a time -->
+    <!-- 4. What to check before relying on it -->
+    <section class="card caveats" id="caveatsCard">
+      <div class="cardhead"><div><h2>Before you rely on this</h2><p class="hint" style="margin:0">What the numbers can't tell you yet, and how to close each gap.</p></div></div>
+      <ul class="cav" id="caveats"></ul>
+    </section>
+
+    <!-- 5. Everything else, one topic at a time -->
+    <h2 class="sectiontitle">Details</h2>
     <nav class="rtabs" id="rtabs" role="tablist">
-      <button role="tab" data-tab="why" class="on">Why this design</button>
+      <button role="tab" data-tab="why" class="on">Design details</button>
       <button role="tab" data-tab="models">All models</button>
       <button role="tab" data-tab="cost">Cost</button>
       <button role="tab" data-tab="cases">Test cases</button>
@@ -184,7 +217,8 @@
           <p class="hint" style="margin:0" id="gradeNote"></p></div></div>
         <div class="pills" id="specPills" style="margin-top:10px"></div>
         <ul class="facts hint" id="assumptions" style="margin-top:8px"></ul>
-        <button class="ghost" id="adjustBtn" style="margin-top:8px">Adjust &amp; re-run</button>
+        <div class="runrow" style="margin-top:8px"><button class="ghost" id="adjustBtn">Adjust &amp; re-run</button>
+          <button class="ghost" id="saveTs" data-tip="Download these exact test cases (with the task line and reference text). Load the file under More options next time and every run is graded on the same cases.">⬇ Save test set</button></div>
         <div id="adjust" class="hidden adjust">
           <div class="reqs">
             <div><label for="a_acc">Minimum accuracy</label><div class="unit"><input type="number" id="a_acc" min="50" max="100"><span>%</span></div></div>
@@ -308,6 +342,46 @@ $("#addCase").onclick = () => addCase("", "");
 $("#caseTable").addEventListener("click", (e) => { if (e.target.closest(".rm")) e.target.closest("tr").remove(); });
 $("#rerun").onclick = () => advise({ goal: $("#goal").value.trim(), spec: readAdjust() });
 $("#adr").onclick = downloadADR;
+$("#backRes").onclick = () => showBrief(true);
+$("#editGoal").onclick = () => { showBrief(false); $("#backRes").classList.remove("hidden"); $("#goal").focus(); $("#goalcard").scrollIntoView({ behavior: "smooth", block: "start" }); };
+$("#saveTs").onclick = () => saveTestSet();
+$("#tsFile").onchange = (e) => { const f = e.target.files[0]; if (f) f.text().then((t) => loadTestSet(t, f.name)); e.target.value = ""; };
+$("#tsClear").onclick = () => { TESTSET = null; showTestSet(); };
+let TESTSET = null;
+function slug(t) { return (t || "agent").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "agent"; }
+function saveTestSet() {
+  if (!SPEC) return;
+  const goal = (SRC && SRC.goal) || $("#goal").value.trim();
+  const ts = { format: "architecture-advisor-test-set", version: 1, name: SPEC.test_set ? SPEC.test_set.name : slug(SPEC.summary), saved: new Date().toISOString().slice(0, 10),
+    goal, summary: SPEC.summary, labels: SPEC.labels || [], reference_material: SPEC.reference_material || "",
+    test_cases: (SPEC.test_cases || []).map((c) => ({ input: c.input, expected: c.expected })),
+    spec: Object.fromEntries(Object.entries(SPEC).filter(([k]) => !["harness", "priorities", "multi_model", "test_set"].includes(k))) };
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(ts, null, 2)], { type: "application/json" }));
+  a.download = `test-set-${slug(ts.name)}.json`; a.click(); URL.revokeObjectURL(a.href);
+  track("test_set_saved", { cases: ts.test_cases.length });
+}
+function loadTestSet(text, file) {
+  let ts = null;
+  try {
+    const j = JSON.parse(text);
+    ts = { name: j.name || file.replace(/\.json$/i, ""), goal: j.goal, summary: j.summary, labels: j.labels, reference_material: j.reference_material, test_cases: j.test_cases || [],
+      spec: j.spec && typeof j.spec === "object" ? { ...j.spec, test_cases: j.test_cases || [] } : null };
+    if (j.goal && !$("#goal").value.trim()) $("#goal").value = j.goal;
+  } catch (e) {
+    let rows = parseCsv(text), head = (rows[0] || []).map((h) => h.trim().toLowerCase()), ii = head.indexOf("input"), ei = head.indexOf("expected");
+    if (ii >= 0) rows = rows.slice(1); else { ii = 0; ei = 1; }
+    ts = { name: file.replace(/\.csv$/i, ""), test_cases: rows.map((r) => ({ input: (r[ii] || "").trim(), expected: (r[ei] || "").trim() })).filter((c) => c.input) };
+  }
+  TESTSET = ts.test_cases.length ? { ...ts, test_cases: ts.test_cases.slice(0, 60) } : null;
+  showTestSet(TESTSET ? "" : "No test cases found in that file.");
+}
+function showTestSet(err) {
+  $("#tsClear").classList.toggle("hidden", !TESTSET);
+  $("#tsOut").innerHTML = err ? `<span class="no">${esc(err)}</span>` : TESTSET
+    ? `<b>Using “${esc(TESTSET.name)}”</b> · ${TESTSET.test_cases.length} test cases${TESTSET.reference_material ? " + reference text" : ""}${TESTSET.spec ? " + the saved reading of the goal (used while the goal text is unchanged)" : ""}. Every run is graded on exactly these.`
+    : "Leave empty to have about 40 test cases written for your goal. A saved set (JSON from “Save test set”, or a CSV with input, expected) is used exactly as is, so every run is graded on the same cases.";
+}
 function showTab(name) {
   document.querySelectorAll("#rtabs button").forEach((b) => { b.classList.toggle("on", b.dataset.tab === name); b.setAttribute("aria-selected", b.dataset.tab === name); });
   document.querySelectorAll(".tabpanel").forEach((p) => p.classList.toggle("hidden", p.dataset.tab !== name));
@@ -375,13 +449,14 @@ async function reopen() {
   const j = await r.json();
   SPEC = j.spec; SRC = j; ADV = j.advice; $("#goal").value = j.goal || SPEC.summary || "";
   document.querySelectorAll(".prio_in").forEach((x) => (x.checked = (SPEC.priorities || []).includes(x.value)));
+  $("#harness").checked = !!SPEC.harness; $("#multiModel").checked = SPEC.multi_model !== false;
   render();
 }
 function ago(t) { const m = Math.round((Date.now() / 1000 - t) / 60); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : `${Math.round(m / 60)} h ago`; }
 function renderCacheBar() {
   history.replaceState(null, "", location.pathname + "?r=" + ADV.key);
-  $("#cachebar").innerHTML = (ADV.cached_at ? `<span>♻ Reopened from cache — worked out ${ago(ADV.cached_at)} with today's prices and policy.</span><button class="linkbtn" id="fresh">Recalculate</button>` : "") +
-    `<button class="linkbtn" id="copyLink" data-tip="Anyone with the link can reopen this result for 24 hours. It's kept in memory only, never saved.">🔗 Copy link to this result</button>`;
+  $("#cachebar").innerHTML = (ADV.cached_at ? `<span class="hint">♻ From cache, worked out ${ago(ADV.cached_at)}</span><button class="linkbtn" id="fresh">Recalculate</button>` : "") +
+    `<button class="linkbtn" id="copyLink" data-tip="Anyone with the link can reopen this result for 24 hours. It's kept in memory only, never saved.">🔗 Copy link</button>`;
   $("#copyLink").onclick = () => navigator.clipboard.writeText(location.href).then(() => ($("#copyLink").textContent = "✓ Link copied"));
   if ($("#fresh")) $("#fresh").onclick = () => advise(SRC.source === "edited" ? { goal: $("#goal").value.trim(), spec: SPEC, fresh: true } : { goal: $("#goal").value.trim(), fresh: true });
 }
@@ -463,6 +538,13 @@ async function advise(body) {
   body.constraints = readConstraints();
   body.multi_model = $("#multiModel").checked;
   body.priorities = [...document.querySelectorAll(".prio_in:checked")].map((x) => x.value);
+  if (TESTSET && !body.spec) {
+    // Same goal text: reuse the saved reading of the goal as well, so the architecture can't change between runs.
+    // Edited goal: keep only the test cases and let the goal be read again.
+    if (TESTSET.spec && body.goal === TESTSET.goal) body.spec = { ...TESTSET.spec, test_set: { name: TESTSET.name, count: TESTSET.test_cases.length } };
+    else body.test_set = TESTSET;
+  }
+  $("#briefRun").classList.remove("hidden"); $("#bar2").style.width = "0";
   $("#go").disabled = $("#rerun").disabled = true;
   $("#stepper").classList.remove("hidden"); $("#progressWrap").classList.remove("hidden"); $("#bar").style.width = "0";
   document.querySelectorAll("#stepper li").forEach((li) => (li.className = ""));
@@ -478,7 +560,7 @@ async function advise(body) {
         if (ev.type === "stage") { const o = ["understand", "test", "rank"], i = o.indexOf(ev.stage);
           document.querySelectorAll("#stepper li").forEach((li, j) => (li.className = j < i ? "done" : j === i ? "active" : "")); }
         if (ev.type === "spec") { SPEC = ev.spec; SRC = ev; }
-        if (ev.type === "progress") $("#bar").style.width = (100 * ev.done / ev.total) + "%";
+        if (ev.type === "progress") $("#bar").style.width = $("#bar2").style.width = (100 * ev.done / ev.total) + "%";
         if (ev.type === "advice") ADV = ev;
         if (ev.type === "error") throw new Error(ev.error);
       }
@@ -487,11 +569,11 @@ async function advise(body) {
     setTimeout(() => { $("#stepper").classList.add("hidden"); $("#progressWrap").classList.add("hidden"); }, 1200);
     await loadKnowledge();
     render();
-    $("#results").scrollIntoView({ behavior: "smooth", block: "start" });
+    window.scrollTo({ top: 0, behavior: "smooth" });
   } catch (e) {
     if (e.quota) { renderCompareBar(e.message); } else { alert("Advice failed: " + e.message); }
   }
-  $("#go").disabled = $("#rerun").disabled = false; $("#compareBtn").disabled = false;
+  $("#go").disabled = $("#rerun").disabled = false; $("#compareBtn").disabled = false; $("#briefRun").classList.add("hidden");
 }
 
 // ---------------------------------------------------------------- render
@@ -509,152 +591,205 @@ function modelName(id) { return id === "jev" ? "Jev" : `${mlabel(id)}${mplat(id)
 
 function render() {
   $("#results").classList.remove("hidden");
-  const conf = SRC.confirm || [];
-  $("#confirm").classList.toggle("hidden", !conf.length);
-  $("#confirm").innerHTML = conf.length ? `<b>Please confirm:</b> ${conf.map((c) => `${esc(c.label)} read as <b>${esc(String(c.architect))}</b> (rules suggest ${esc(String(c.rules))})`).join(" · ")}. <a href="#" id="fixit">Adjust</a>` : "";
-  if (conf.length) $("#fixit").onclick = (e) => { e.preventDefault(); showTab("cases"); $("#adjust").classList.remove("hidden"); $("#adjust").scrollIntoView({ behavior: "smooth" }); };
-  PAGE = 1; loadQuota(); renderCacheBar(); renderAnswer(); renderHero(); renderArchitectures(); renderSystem(); renderRobust(); renderPlatforms(); renderTable(); renderDetails(); renderHarness(); renderDecision(); renderCost();
+  PAGE = 1; loadQuota(); renderCacheBar(); renderBrief(); renderVerdict(); renderOptions(); renderHow(); renderCaveats(); showBrief(true); renderSystem(); renderRobust(); renderPlatforms(); renderTable(); renderDetails(); renderHarness(); renderDecision(); renderCost();
   let tab = "why"; try { tab = sessionStorage.getItem("advisorTab") || "why"; } catch (e) {}
   showTab(tab);
 }
 
-const GLOSS = {
-  "Per month": "Model cost per month at your volume, including the production controls when they're on.",
-  "Accuracy": "Share of test cases answered correctly. 'Likely' is the 95% range: with few test cases the true rate could be anywhere in it.",
-  "95% within": "95 of every 100 requests are answered within this time (the p95 latency). The line under it gives p90 (90 of every 100) and the median (half of requests).",
-  "Per 1K correct": "Cost for every 1,000 correct answers (cost per request ÷ accuracy × 1,000): the fairest way to compare models.",
-};
-function tile(k, v, sub, state) {
-  return `<div class="tile ${state || ""}"><div class="tk"${GLOSS[k] ? ` data-tip="${esc(GLOSS[k])}"` : ""}>${k}</div><div class="tv">${v}</div><div class="ts">${sub || "&nbsp;"}</div></div>`;
-}
-function renderAnswer() {
-  const d = ADV.top[0], p = ADV.models;
-  if (!d) { $("#answer").innerHTML = ""; return; }
-  const st = strength(), stab = ADV.stability || {}, g = ADV.grading || {};
-  const miss = d.checks.filter((c) => !c.pass).map((c) => c.label.toLowerCase());
-  const acc = d.accuracy != null ? `, <b>${pct(d.accuracy)}</b> accurate on ${d.n} test cases (likely ${range(d)})` : "";
-  const badges = [`<span class="strength ${st[1]}" data-tip="${esc(st[2])}">Confidence: ${st[0]}</span>`];
-  if (ADV.cached_at || stab.spec === "pinned" || stab.reused) badges.push(`<span class="badge2" data-tip="Within one browser session the same goal keeps the same test cases and each model's measured answers, so the recommendation doesn't drift between runs.">⟲ Same test cases as earlier in this session</span>`);
-  if (g.judge) badges.push(`<span class="badge2" data-tip="Free-text answers the keyword check couldn't confirm were checked by a judge model for meaning.">⚖ ${g.judge} answers checked by a judge</span>`);
-  if (ADV.scope === "shortlist") badges.push(`<span class="badge2" data-tip="Only a shortlist of models was tested. Use Compare all models in the All models tab to test every one.">${ADV.evaluated_models.length} of ${ADV.eligible_models} models tested</span>`);
-  const split = d.harness && d.harness.monthly >= 1 ? ` (${fmt$(d.monthly - d.harness.monthly)} model calls + ${fmt$(d.harness.monthly)} production controls)` : "";
-  const c = p.cheaper_option, gave = c ? (c.failed || []).map((k) => ({ accuracy: "accuracy target", halluc: "hallucination limit", latency: "speed target", cost: "budget" }[k] || k)) : [];
-  const alt = !c ? "" : `<p class="ans-alt">💡 <b>Cheaper option:</b> <b>${esc(c.label)}</b> on ${esc(c.platform)} at <b>${fmt$(c.monthly)}/month</b> (saves ${fmt$(c.saves)}), ${pct(c.accuracy)} accurate${c.halluc ? `, hallucinations ${pct(c.halluc)}` : ""}. `
-    + (c.meets && c.mode !== "live" ? `It met every requirement <b>in simulation only</b>; add its vendor's key and re-run to confirm before choosing it.`
-      : c.meets ? "It also meets every requirement."
-      : `Not recommended because it misses the <b>${esc(gave.join(" and "))}</b>${c.mode !== "live" ? " and was simulated, not measured live" : ""}. If that's acceptable, lower the target under Adjust.`) + `</p>`;
-  const PR = { cost: "💲 Lowest cost", accuracy: "🎯 Highest accuracy", speed: "⚡ Fastest responses", simplicity: "🧩 Simplest to build" };
-  const goal = (SRC && SRC.goal) || $("#goal").value.trim() || SPEC.summary;
-  if (!$("#goal").value.trim()) $("#goal").value = goal;
-  badges.unshift(`<span class="badge2 prio-badge" data-tip="Change it under 'What matters most?' above and run again.">Priority: ${(SPEC.priorities || []).length ? SPEC.priorities.map((k) => PR[k]).join(" + ") : "balanced (cheapest that meets every target)"}</span>`);
-  $("#answer").innerHTML = `<div class="ans-goal"><span class="ans-k">Your goal</span><q>${esc(goal)}</q>${goal !== SPEC.summary ? `<span class="ans-u">Understood as: ${esc(SPEC.summary)}</span>` : ""}</div>
-    <p class="ans-main">Build a <b>${esc(d.name)}</b> on <b>${esc(modelName(p.primary))}</b>${p.fallback ? `, with <b>${esc(modelName(p.fallback))}</b> as the fallback` : ""}. About <b>${fmt$(d.monthly)}/month</b>${split}${acc}. ${d.passes ? "Meets every requirement." : `Closest option: misses ${esc(miss.join(", "))}.`}</p>
-    ${alt}
-    <div class="ans-badges">${badges.join("")}</div>`;
-}
-function reqChips(d) {
-  const lab = { accuracy: "Accuracy", halluc: "Hallucinations", latency: "Speed", cost: "Budget", context: "Context", quota: "Peak load" };
-  const tgt = (c) => c.key === "latency" ? `95% ≤ ${dur(c.target)}` : c.key === "cost" ? `≤ ${fmt$(c.target)}` : c.key === "halluc" ? `≤ ${pct(c.target)}`
-    : c.key === "context" ? `${tok(c.value)} of ${tok(c.target)}` : c.key === "quota" ? `≤ ${tok(c.target)} tokens/min`
-    : c.relaxed_from ? `≥ ${pct(c.target)} (cost first; target ${pct(c.relaxed_from)})` : `≥ ${pct(c.target)}`;
-  return d.checks.map((c) => {
-    const unsure = c.key === "accuracy" && c.pass && !c.sure;
-    return `<span class="req ${c.pass ? "ok" : "bad"} ${unsure ? "unsure" : ""}" ${unsure ? `data-tip="Measured ${pct(c.value)}, but with ${d.n} test cases the true rate could be ${pct(c.lo)}–${pct(c.hi)}. Add real cases to confirm."` : ""}>${c.pass ? (unsure ? "≈" : "✓") : "✗"} ${lab[c.key]} ${tgt(c)}</span>`;
-  }).join("");
-}
+// ---------------------------------------------------------------- report
 function tok(n) { return n == null ? "—" : n >= 1e6 ? (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M" : n >= 1e3 ? Math.round(n / 1e3) + "k" : String(Math.round(n)); }
 function range(d) { return d.acc_lo == null ? "" : `${Math.round(d.acc_lo * 100)}–${pct(d.acc_hi)}`; }
-function heroFacts(d, p) {
-  const f = [];
-  f.push(`<span class="fact" data-tip="Engineer-weeks for a first production release; planning estimate from knowledge/tco.json">🛠 Build ${d.build_weeks[0]}–${d.build_weeks[1]} eng-weeks${d.build_usd ? ` (~${fmt$(d.build_usd[0])}–${fmt$(d.build_usd[1])})` : ""}</span>`);
-  if (d.infra_monthly) f.push(`<span class="fact" data-tip="${esc(d.infra.map((i) => `${i.name}: ${i.basis}`).join("; "))}">🏗 Fixed infra ${fmt$(d.infra_monthly)}/mo</span>`);
-  f.push(`<span class="fact" data-tip="Busiest minute at ${SPEC.peak_factor}× the average hour, ${d.peak.calls.toFixed(1)} model calls per request. Check your quota${d.peak.check_url ? " at " + d.peak.check_url : ""}; beyond it, consider ${d.peak.provisioned || "provisioned capacity"}.">📈 Peak ${Math.round(d.peak.rpm)} req/min · ${tok(d.peak.tpm)} tokens/min${d.peak.quota ? (d.peak.over.length ? " — over quota" : " — within quota") : ""}</span>`);
-  f.push(`<span class="fact" data-tip="Prompt: ${tok(SPEC.system_prompt_tokens)} system + tools, ${tok(SPEC.context_tokens)} retrieved, ${tok(SPEC.history_tokens)} history. Change it under 'What I understood → Adjust'.">📏 ~${tok(d.tokens_per_call)} tokens per call${d.cached_share >= 0.05 ? ` · ${pct(d.cached_share)} cached` : ""}</span>`);
-  if (p.committed) f.push(`<span class="fact">🤝 On your ${esc(SPEC.commitment)} commitment</span>`);
-  if (p.retirement) f.push(`<span class="fact warnf" data-tip="${esc(p.retirement.title)}">⚠ Retirement notice${p.retirement.date ? " · " + esc(p.retirement.date) : ""}</span>`);
-  return `<div class="facts-row">${f.join("")}</div>`;
+const PRIO = { cost: "Lowest cost", accuracy: "Highest accuracy", speed: "Fastest responses", simplicity: "Simplest to build" };
+const CHECK_TXT = { accuracy: "accuracy", halluc: "made-up answers", latency: "response time", cost: "budget", context: "context size", quota: "peak load" };
+function chk(d, key) { return (d.checks || []).find((c) => c.key === key); }
+function mark(c, unsure) {
+  if (!c) return "";
+  const cls = !c.pass ? "bad" : unsure ? "unsure" : "ok";
+  return `<span class="st ${cls}"><i aria-hidden="true">${!c.pass ? "✗" : unsure ? "≈" : "✓"}</i>`;
 }
-function heroNotes(d, p) {
-  const n = [], acc = d.checks.find((c) => c.key === "accuracy");
-  if (acc && acc.pass && !acc.sure) n.push(`📊 Measured ${pct(d.accuracy)} on ${d.n} test cases, but the true rate could be as low as <b>${pct(d.acc_lo)}</b>. Upload real cases (Test cases tab → Adjust → Upload CSV) to confirm it clears ${pct(SPEC.accuracy_target)}.`);
-  if ((p.near_misses || []).length) n.push(`🔎 Cheaper models that missed the accuracy target by a margin within noise: ${p.near_misses.map((x) => `<b>${esc(x.label)}</b> on ${esc(x.platform)} (${pct(x.accuracy)}, ${fmt$(x.monthly)}/mo)`).join(", ")}. More test cases would settle it.`);
-  if ((p.simulated_qualifiers || []).length) n.push(`🧪 Cheaper in simulation only: ${p.simulated_qualifiers.map((x) => `<b>${esc(x.label)}</b> on ${esc(x.platform)} (${fmt$(x.monthly)}/mo)`).join(", ")}. The winner comes only from models measured live; add those vendors' keys to measure them.`);
-    if (p.fallback_retirement) n.push(`⚠ The fallback has a retirement notice: ${esc(p.fallback_retirement.title)}.`);
-  return n.length ? `<div class="notes">${n.map((x) => `<div>${x}</div>`).join("")}</div>` : "";
+function targetRow(c, text, tip) {
+  if (!c) return `<div class="kpi-t muted">${text}</div>`;
+  const unsure = c.key === "accuracy" && c.pass && !c.sure;
+  return `<div class="kpi-t"${tip || unsure ? ` data-tip="${esc(tip || `Measured ${pct(c.value)} on the test cases, but the true rate could be ${pct(c.lo)}–${pct(c.hi)}. More test cases would confirm it.`)}"` : ""}>${mark(c, unsure)}${esc(text)}</span></div>`;
 }
-function renderHero() {
-  const d = ADV.top[0], p = ADV.models, st = strength(), i = info(p.primary), r = row(p.primary), fbi = p.fallback ? info(p.fallback) : null, fb = p.fallback_design;
-  const good = ADV.model_table.filter((x) => x.tested && x.meets).map((x) => x.monthly).sort((a, b) => a - b);
-  const median = good.length ? good[Math.floor(good.length / 2)] : null;
-  const saving = median ? Math.round((1 - d.monthly / median) * 100) : 0;
-  const nLive = p.live_qualified || 0, simOnly = good.length - nLive;
-  const why = nLive && simOnly > 0 && r && r.mode === "live" ? `Cheapest of <b>${nLive}</b> model${nLive > 1 ? "s" : ""} that met every requirement in <b>live</b> measurements. ${simOnly} more qualify only in simulation — add their vendors' API keys to measure them for real.`
-    : good.length > 1 && saving >= 5 ? `Cheapest of <b>${good.length}</b> models that meet every requirement — <b>${saving}% below</b> the typical qualifying cost (${fmt$(median)}/mo).`
-    : good.length > 1 ? `<b>${good.length}</b> models meet every requirement at about this cost; this one wins on verified price, then its own per-request cost.`
-    : good.length === 1 ? "The only model that meets every requirement." : "No model met every requirement; this is the closest.";
-  const cu = p.cheaper_unverified;
-  $("#hero").innerHTML = `
+function missText(checks) { return checks.filter((c) => !c.pass).map((c) => CHECK_TXT[c.key] || c.label.toLowerCase()); }
+function andList(xs) { return xs.length <= 1 ? xs.join("") : xs.slice(0, -1).join(", ") + " and " + xs.at(-1); }
 
-    <div class="hero-grid">
-      <article class="winner">
-        <div class="badge-row"><span class="medal">🏆 Winner · best model</span>${statusBadge(i)} ${r ? `<span class="modebadge ${r.mode}">${r.mode}</span>` : ""}</div>
-        <div class="wname">${esc(i.label || p.primary)}</div>
-        <div class="wmeta">${esc(i.maker || "")} · <b>${esc(i.platform || "")}</b> · $${i.in} / $${i.out} per 1M tokens</div>
-        <div class="warch">runs in <b>${esc(d.name)}</b></div>
-        <div class="tiles t4">
-          ${tile("Per month", fmt$(d.monthly), d.infra_monthly ? `+ ${fmt$(d.infra_monthly)} fixed infra` : `${SPEC.requests_per_day.toLocaleString()} requests/day`, "hi")}
-          ${tile("Accuracy", pct(d.accuracy), `<span data-tip="${d.right} of ${d.n} test cases correct; 95% range ${range(d)}">${d.right}/${d.n} · likely ${range(d)}</span>`)}
-          ${tile("95% within", dur(d.p95_ms), `90% within ${dur(d.p90_ms)} · median ${dur(d.p50_ms)}`)}
-          ${tile("Per 1K correct", d.accuracy ? fmt$(d.cost_per_req * 1000 / d.accuracy) : "—", `hallucinations ${pct(d.halluc)}`)}
-        </div>
-        <p class="whywin">${why}${ADV.scope === "shortlist" ? `<br><span class="hint">Picked from a shortlist of ${ADV.evaluated_models.length} of ${ADV.eligible_models} models — use <b>Compare all models</b> in the All models tab to check every one.</span>` : ""}</p>
-        ${heroFacts(d, p)}
-      </article>
-      <article class="runner">
-        <div class="badge-row"><span class="medal alt">↺ Fallback</span>${fbi ? statusBadge(fbi) : ""}</div>
-        ${fbi ? `<div class="rname">${esc(fbi.label)}</div>
-        <div class="wmeta">${esc(fbi.maker)} · <b>${esc(fbi.platform)}</b></div>
-        <div class="warch">Takes over if the winner is down or unavailable${row(p.fallback) && !row(p.fallback).meets ? ` · <span class="no">misses ${esc(row(p.fallback).checks.filter((c) => !c.pass).map((c) => c.label.toLowerCase()).join(", "))}: nothing on another platform met every requirement</span>` : ""}${row(p.fallback) && row(p.fallback).mode !== "live" ? ` · <span class="warn">${row(p.fallback).meets ? "qualified in simulation only" : "simulated, not measured live"}</span>` : ""}</div>
-        <div class="tiles t2">
-          ${tile("Per month", fmt$(fb.monthly), "")}${tile("Accuracy", pct(fb.accuracy), `${fb.right}/${fb.n} · likely ${range(fb)}`)}
-          ${tile("95% within", dur(fb.p95_ms), `90% within ${dur(fb.p90_ms)}`)}${tile("Per 1K correct", fb.accuracy ? fmt$(fb.cost_per_req * 1000 / fb.accuracy) : "—", "")}
-        </div>` : `<p class="hint">No model on another platform met every requirement.</p>`}
-      </article>
-    </div>
-    ${d.harness ? `<p class="hsum">🛡 Includes a production harness: <b>${d.harness.controls.length} controls</b>, ${fmt$(d.harness.monthly)}/month${d.harness.ms >= 1 ? `, +${dur(d.harness.ms)} wait` : ", no added wait"} (estimate).</p>` : ""}
-    <div class="hero-foot"><div class="reqs-row">${reqChips(d)}</div>
-      <div class="ev-row"><span class="strength ${st[1]}">Evidence: ${st[0]}</span><span class="hint">${esc(st[2])}</span></div></div>
-    ${heroNotes(d, p)}
-    ${cu ? `<p class="cheaper">💡 <b>${esc(cu.label)}</b> (${esc(cu.platform)}) also met every requirement at ${fmt$(cu.monthly)}/month but its price isn't verified yet — confirm it to make it eligible.</p>` : ""}`;
+function renderBrief() {
+  const goal = (SRC && SRC.goal) || $("#goal").value.trim() || SPEC.summary;
+  if (!$("#goal").value.trim()) $("#goal").value = goal;
+  $("#briefGoal").textContent = goal;
+  $("#briefUnd").textContent = goal !== SPEC.summary ? "Understood as: " + SPEC.summary : "";
+  const stab = ADV.stability || {}, n = (ADV.top[0] || {}).n || (SPEC.test_cases || []).length;
+  const chips = [
+    `<span class="bchip"><b>Priority</b> ${(SPEC.priorities || []).length ? SPEC.priorities.map((k) => PRIO[k]).join(" + ") : "Balanced"}</span>`,
+    `<span class="bchip">${SPEC.harness ? "Production-ready" : "Prototype (no production controls)"}</span>`,
+    `<span class="bchip">${SPEC.multi_model ? "Mixed models allowed" : "One model everywhere"}</span>`,
+    SPEC.data_class ? `<span class="bchip"><b>Data</b> ${esc(SPEC.data_class)}</span>` : "",
+    SPEC.test_set ? `<span class="bchip"><b>Test set</b> ${esc(SPEC.test_set.name)} · ${SPEC.test_set.count} cases</span>`
+      : `<span class="bchip" data-tip="Written for this goal. Save them (Details → Test cases → Save test set) to grade every future run on the same cases.">${n} generated test cases${ADV.cached_at || stab.spec === "pinned" ? " · same as earlier in this session" : ""}</span>`,
+    ADV.live_count ? "" : `<span class="bchip warnchip">Dry run: simulated numbers</span>`,
+  ];
+  $("#briefChips").innerHTML = chips.join("");
+}
+function showBrief(on) {
+  $("#brief").classList.toggle("hidden", !on);
+  $("#goalcard").classList.toggle("hidden", on);
 }
 
-function renderArchitectures() {
-  const n = ADV.top.length;
-  $("#archTitle").innerHTML = n >= 3 ? "Top 3 architectures for this agent"
-    : `${n === 1 ? "The architecture" : `The ${n} architectures`} that fit this agent <span class="hint" style="font-weight:400">— only ${n} of ${n + Object.keys(ADV.not_applicable).length} patterns fit this task; the rest are listed under “ruled out” with the reason</span>`;
-  $("#top3").innerHTML = ADV.top.map((d, i) => {
-    const lines = i === 0 ? d.why.slice(0, 4) : d.tradeoffs;
-    const chk = (k) => { const c = d.checks.find((x) => x.key === k); return c && !c.pass ? "bad" : ""; };
-    return `<article class="arch ${i === 0 ? "first" : ""}" style="--sc:${SERIES[i]}">
-      <div class="archhead"><span class="rank" style="background:${SERIES[i]};color:#fff">${i + 1}</span><span class="k">Architecture ${i + 1}${i === 0 ? " · recommended" : ""}</span></div>
-      <h3>${esc(d.name)}</h3>
-      <p class="what">${esc(d.what)}</p>
-      ${chainHtml(d)}
-      <div class="hint" style="margin:8px 0 6px">${roleLine(d)}</div>
-      <div class="tiles t3">
-        ${tile("Per month", fmt$(d.monthly), "", chk("cost"))}${tile("Accuracy", pct(d.accuracy), "", chk("accuracy"))}${tile("95% within", dur(d.p95_ms), `90% within ${dur(d.p90_ms)}`, chk("latency"))}
-      </div>
-      <div class="k" style="margin-top:10px">${i === 0 ? "Why this one" : "Trade-off vs architecture 1"}</div>
-      <div class="chips">${lines.map((l) => `<span class="chip2">${esc(l)}</span>`).join("")}</div>
-      ${i === 0 ? "" : `<p class="pick-if"><b>Choose it if</b> ${esc(d.pick_if)}</p>`}
-      <p class="hsum">🛠 Build ${d.build_weeks[0]}–${d.build_weeks[1]} eng-weeks${d.infra_monthly ? ` · infra ${fmt$(d.infra_monthly)}/mo` : ""}${d.build_usd ? ` · first year ~${fmt$(12 * d.total_monthly + (d.build_usd[0] + d.build_usd[1]) / 2)}` : ""} · accuracy range ${range(d)}</p>
-      ${d.harness ? `<p class="hsum">🛡 Harness: ${d.harness.controls.length} controls · ${fmt$(d.harness.monthly)}/mo${d.harness.ms >= 1 ? ` · +${dur(d.harness.ms)}` : ""} <span class="hint">(included above, estimate)</span></p>` : ""}
-      <div class="addons"><span class="ev ${EV[d.evidence][1]}" data-tip="${esc(EV[d.evidence][2])}">${EV[d.evidence][0]}</span>
-        ${d.sources && d.sources.length ? `<span class="hint">· ${d.sources.map((s) => `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title.split(" — ")[0])}</a>`).join(", ")}</span>` : ""}</div>
-    </article>`;
-  }).join("");
+function renderVerdict() {
+  const d = ADV.top[0], p = ADV.models, el = $("#verdict");
+  if (!d) { el.innerHTML = `<div class="v-empty">No architecture fits this goal with the models allowed for its data. See Details → More for what was ruled out.</div>`; return; }
+  const st = strength(), g = ADV.grading || {}, r = row(p.primary) || {}, fr = p.fallback ? row(p.fallback) : null;
+  const miss = missText(d.checks);
+  const status = d.passes ? `<span class="vstatus ok"><i>✓</i> Meets all your targets</span>`
+    : `<span class="vstatus warn"><i>⚠</i> Closest option · misses ${esc(andList(miss))}</span>`;
+  const acc = chk(d, "accuracy"), hal = chk(d, "halluc"), lat = chk(d, "latency"), bud = chk(d, "cost");
+  const model$ = d.harness ? d.monthly - d.harness.monthly : d.monthly;
+  const kpis = [
+    `<div class="kpi"><div class="kpi-k" data-tip="Model calls plus production controls at your volume. Fixed infrastructure is listed separately.">Cost per month</div>
+      <div class="kpi-v">${fmt$(d.monthly)}</div>
+      <div class="kpi-s">${d.harness ? `${fmt$(model$)} model calls + ${fmt$(d.harness.monthly)} controls` : `${SPEC.requests_per_day.toLocaleString()} requests a day`}${d.infra_monthly ? `<br>+ ${fmt$(d.infra_monthly)} fixed infrastructure` : ""}</div>
+      ${bud ? targetRow(bud, `Budget ${fmt$(bud.target)}`) : `<div class="kpi-t muted">${SPEC.requests_per_day.toLocaleString()} requests a day</div>`}</div>`,
+    `<div class="kpi"><div class="kpi-k" data-tip="Share of test cases answered correctly. The range is where the true rate likely sits (95% confidence).">Accuracy</div>
+      <div class="kpi-v">${pct(d.accuracy)}</div>
+      <div class="kpi-s">${d.right} of ${d.n} test cases · likely ${range(d)}</div>
+      ${targetRow(acc, acc ? `Target ${pct(acc.target)} or more${acc.relaxed_from ? ` (cost first; you set ${pct(acc.relaxed_from)})` : ""}` : "")}</div>`,
+    `<div class="kpi"><div class="kpi-k" data-tip="Answers that stated something the source doesn't support. Never traded away for cost.">Made-up answers</div>
+      <div class="kpi-v">${pct(d.halluc)}</div>
+      <div class="kpi-s">${Math.round((d.halluc || 0) * d.n)} of ${d.n} answers</div>
+      ${targetRow(hal, hal ? `Limit ${pct(hal.target)} or less` : "")}</div>`,
+    `<div class="kpi"><div class="kpi-k" data-tip="Time until the answer is ready, including production controls. 95% of requests finish within the big number.">Response time</div>
+      <div class="kpi-v">${dur(d.p95_ms)}</div>
+      <div class="kpi-s">for 95% of requests · 90% within ${dur(d.p90_ms)} · median ${dur(d.p50_ms)}</div>
+      ${targetRow(lat, lat ? `Target ${dur(lat.target)} or less` : "")}</div>`,
+  ];
+  el.className = "verdict " + (d.passes ? "v-ok" : "v-warn");
+  el.innerHTML = `
+    <div class="v-top">${status}<span class="v-ev" data-tip="${esc(st[2])}">Evidence: <b>${st[0]}</b> · ${d.n} test cases${g.judge ? ` · ${g.judge} checked by a judge model` : ""} · ${ADV.live_count ? `${ADV.live_count} of ${ADV.evaluated_models.length} models measured live` : "simulated"}</span></div>
+    <h2 class="v-head">Build <span class="v-arch">${esc(d.name)}</span> on <span class="v-model">${esc(modelName(p.primary))}</span></h2>
+    <p class="v-sub">${p.fallback ? `Fallback if it's unavailable: <b>${esc(modelName(p.fallback))}</b>${fr && fr.mode !== "live" ? ` <span class="tag warn">not measured live</span>` : ""}${fr && !fr.meets ? ` <span class="tag">misses ${esc(andList(missText(fr.checks)))}</span>` : ""}` : "No model on another platform can serve as a fallback."}${r.mode && r.mode !== "live" ? ` <span class="tag warn">recommended model simulated</span>` : ""}</p>
+    <div class="kpis">${kpis.join("")}</div>`;
 }
 
+function optRow(o) {
+  const t = o.m, ok = o.meets;
+  return `<tr class="${o.cls || ""}">
+    <td data-l="Option"><div class="o-tag ${o.cls || ""}">${o.tag}</div><div class="o-note">${o.note || ""}</div></td>
+    <td data-l="Design"><div class="o-arch">${esc(o.arch)}</div><div class="o-model">${o.model}</div></td>
+    <td data-l="Per month" class="num"><b>${fmt$(t.monthly)}</b></td>
+    <td data-l="Accuracy" class="num">${pct(t.accuracy)}</td>
+    <td data-l="Made up" class="num">${pct(t.halluc)}</td>
+    <td data-l="95% within" class="num">${dur(t.p95_ms)}<div class="o-sub">90%: ${dur(t.p90_ms)}</div></td>
+    <td data-l="Your targets">${ok ? `<span class="st ok"><i>✓</i>All met</span>` : `<span class="st bad"><i>✗</i>Misses ${esc(andList(o.miss))}</span>`}</td>
+    <td data-l="Measured">${o.mode === "live" ? `<span class="st ok"><i>●</i>Live</span>` : `<span class="st unsure" data-tip="This platform isn't reachable from this server, so the numbers come from a built-in profile, not real calls."><i>◌</i>Simulated</span>`}</td>
+  </tr>`;
+}
+function renderOptions() {
+  const d = ADV.top[0], p = ADV.models;
+  if (!d) { $("#optionsCard").classList.add("hidden"); return; }
+  $("#optionsCard").classList.remove("hidden");
+  const rows = [], mdl = (id) => `${esc(mlabel(id))} <span class="o-plat">${esc(mplat(id))}</span>`;
+  const rr = row(p.primary) || {};
+  rows.push({ tag: "★ Recommended", cls: "rec", arch: d.name, model: rolesText(d) || mdl(p.primary), m: d, meets: d.passes, miss: missText(d.checks), mode: rr.mode,
+    note: whyModel() });
+  const fb = p.fallback && row(p.fallback), c = p.cheaper_option;
+  if (fb) rows.push({ tag: "↺ Fallback", arch: d.name, model: mdl(p.fallback), m: p.fallback_design || fb, meets: fb.meets, miss: missText(fb.checks), mode: fb.mode,
+    note: `Takes over when the recommended model is down. On another platform, so one outage can't take out both.${c && c.id === p.fallback ? " Also the cheapest option tested." : ""}` });
+  if (c && c.id !== p.fallback) {
+    const cr = row(c.id);
+    rows.push({ tag: "$ Cheaper option", arch: d.name, model: mdl(c.id), m: cr, meets: c.meets, miss: missText(cr.checks), mode: c.mode,
+      note: c.meets && c.mode !== "live" ? "Met every target, but only in simulation. Measure it live before choosing it."
+        : c.meets ? "Also meets every target." : `Saves ${fmt$(c.saves)}/month but misses ${esc(andList(missText(cr.checks)))}.` });
+  }
+  ADV.top.slice(1).forEach((x, i) => {
+    const xr = row(x.models.primary) || {};
+    rows.push({ tag: `Alternative ${i + 1}`, arch: x.name, model: rolesText(x) || mdl(x.models.primary), m: x, meets: x.passes, miss: missText(x.checks), mode: xr.mode,
+      note: `Choose it if ${esc(x.pick_if)}` });
+  });
+  $("#optHint").innerHTML = `The recommendation, its fallback${c && c.id !== p.fallback ? ", the cheapest alternative" : ""}${ADV.top.length > 1 ? ` and the other ${ADV.top.length - 1 === 1 ? "architecture" : "architectures"} that fit` : ""}. Same test cases, same volume (${SPEC.requests_per_day.toLocaleString()} requests a day), production controls ${SPEC.harness ? "included" : "not included"}.`;
+  $("#options").innerHTML = `<div class="tablewrap"><table class="otable"><thead><tr><th>Option</th><th>Design</th><th class="num">Per month</th><th class="num">Accuracy</th><th class="num">Made up</th><th class="num">95% within</th><th>Your targets</th><th>Measured</th></tr></thead>
+    <tbody>${rows.map(optRow).join("")}</tbody></table></div>`;
+}
+function rolesText(d) {
+  const roles = (d.roles || []).filter((r) => !r.role.startsWith("fallback"));
+  const uniq = [...new Set(roles.map((r) => r.model))];
+  if (uniq.length <= 1) return "";
+  return roles.map((r) => `<span class="o-role">${esc(r.role)}:</span> ${esc(r.model === "jev" ? "Jev" : mlabel(r.model))}`).join("<br>");
+}
+function whyModel() {
+  const d = ADV.top[0], alt = ADV.top.slice(1).find((x) => x.passes && x.monthly < d.monthly * 0.97);
+  if (d.passes && alt && !(SPEC.priorities || []).includes("cost")) {
+    const gave = [];
+    if (alt.accuracy < d.accuracy) gave.push(`less accurate (${pct(alt.accuracy)} vs ${pct(d.accuracy)})`);
+    if (alt.build_weeks[1] > d.build_weeks[1]) gave.push(`more to build (${alt.build_weeks[0]}–${alt.build_weeks[1]} vs ${d.build_weeks[0]}–${d.build_weeks[1]} engineer-weeks)`);
+    if (alt.p95_ms > d.p95_ms * 1.1) gave.push(`slower (${dur(alt.p95_ms)} vs ${dur(d.p95_ms)})`);
+    return `Best balance of accuracy, cost, speed and simplicity. ${esc(alt.name)} is ${fmt$(d.monthly - alt.monthly)}/month cheaper and also meets every target${gave.length ? `, but ${andList(gave)}` : ""}. Tick “Lowest cost” to rank by price.`;
+  }
+  return whyModelOnly();
+}
+function whyModelOnly() {
+  const p = ADV.models, d = ADV.top[0];
+  const good = ADV.model_table.filter((x) => x.tested && x.meets), live = good.filter((x) => x.mode === "live");
+  if (!d.passes) return "Nothing tested met every target; this comes closest" + ((SPEC.priorities || []).length ? " on your priorities." : ".");
+  if ((SPEC.priorities || []).length) return `Best on ${andList(SPEC.priorities.map((k) => PRIO[k].toLowerCase()))} among the ${good.length} that met every target.`;
+  return live.length > 1 ? `Cheapest of ${live.length} models that met every target when measured live.` : good.length > 1 ? `Cheapest of ${good.length} models that met every target.` : "The only model tested that met every target.";
+}
+
+function renderHow() {
+  const d = ADV.top[0], p = ADV.models;
+  if (!d) { $("#howCard").classList.add("hidden"); return; }
+  $("#howCard").classList.remove("hidden");
+  $("#howHint").textContent = d.what;
+  // Only the reasons not already shown as numbers above: the pattern's rationale and the goal facts that chose it.
+  const skip = /^(About \$|Includes a production harness|No design met|Meets all|\d+ of \d+ test cases correct|Why not the cheaper|You put |Plus about|Prompt caching covers)|(the most accurate model tested|the cheapest model that meets|meets every requirement in this architecture)/;
+  const why = d.why.filter((w) => !skip.test(w)).map(esc)
+    .concat(((ADV.system && ADV.system.trace) || []).filter((t) => (t.effects || []).some((e) => e.rank === 1)).slice(0, 3)
+      .map((t) => `<b>${esc(t.fact)}</b> — ${esc(t.rule)}`));
+  const facts = [
+    ["Build effort", `${d.build_weeks[0]}–${d.build_weeks[1]} engineer-weeks${d.build_usd ? ` (about ${fmt$(d.build_usd[0])}–${fmt$(d.build_usd[1])})` : ""}`],
+    d.infra_monthly ? ["Fixed infrastructure", `${fmt$(d.infra_monthly)}/month · ${esc(d.infra.filter((i) => i.monthly).map((i) => i.name.toLowerCase()).join(", "))}`] : null,
+    d.harness ? ["Production controls", `${d.harness.controls.length} controls · ${fmt$(d.harness.monthly)}/month · adds ${dur(d.harness.ms)} (estimate)`] : null,
+    ["Busiest minute", `${Math.round(d.peak.rpm)} requests · ${tok(d.peak.tpm)} tokens${d.peak.quota ? (d.peak.over.length ? " · over your quota" : " · within quota") : ""}`],
+    ["Prompt size", `about ${tok(d.tokens_per_call)} tokens per call${d.cached_share >= 0.05 ? ` · ${pct(d.cached_share)} cached` : ""}`],
+    p.committed ? ["Commitment", `On your ${esc(SPEC.commitment)} spend commitment`] : null,
+  ].filter(Boolean);
+  $("#how").innerHTML = `<h3 class="h3" style="margin-top:12px">What happens on each request</h3>${chainHtml(d)}
+    <p class="how-roles">${roleLine(d)}</p>
+    <div class="how-grid">
+    <div><h3 class="h3">What it takes</h3><dl class="dl">${facts.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl></div>
+    <div><h3 class="h3">Why this design</h3><ul class="why-list">${why.map((w) => `<li>${w}</li>`).join("")}</ul>
+      <p class="hint" style="margin:8px 0 0"><span class="ev ${EV[d.evidence][1]}" data-tip="${esc(EV[d.evidence][2])}">${EV[d.evidence][0]}</span>${d.sources && d.sources.length ? ` · guidance: ${srcLinks(d.sources)}` : ""}</p></div>
+  </div>`;
+}
+
+function yn(v) { return v === true ? "yes" : v === false ? "no" : String(v); }
+function renderCaveats() {
+  const d = ADV.top[0], p = ADV.models, items = [], h = ADV.harness || {};
+  const add = (level, html) => items.push(`<li class="${level}"><i aria-hidden="true">${level === "warn" ? "⚠" : "ℹ"}</i><div>${html}</div></li>`);
+  (SRC.confirm || []).forEach((c) => add("warn", `<b>Please confirm:</b> ${esc(c.label.toLowerCase())} was read as <b>${esc(yn(c.architect))}</b>, but the built-in rules suggest <b>${esc(yn(c.rules))}</b>. It changes which vendors may see the data. <a href="#" class="act" data-act="adjust">Adjust</a>`));
+  if (!h.on && h.recommended) add("warn", `<b>Prototype numbers.</b> This agent needs production controls because ${esc(andList(h.reasons))}. <a href="#" class="act" data-act="harness">Include them and re-run</a>`);
+  if (d) {
+    const acc = chk(d, "accuracy");
+    if (acc && acc.pass && !acc.sure) add("info", `Accuracy was ${pct(d.accuracy)} on ${d.n} test cases; the true rate could be as low as <b>${pct(d.acc_lo)}</b>. Grade on your own cases to settle it. <a href="#" class="act" data-act="savets">Save this test set</a>`);
+    const sims = [p.fallback, p.cheaper_option && p.cheaper_option.id].filter((id, i, a) => id && a.indexOf(id) === i && row(id) && row(id).mode !== "live");
+    if (sims.length) add("info", `${esc(andList(sims.map((id) => `${mlabel(id)} (${mplat(id)})`)))} ${sims.length > 1 ? "weren't" : "wasn't"} measured live: this server has no access to ${sims.length > 1 ? "those platforms" : "that platform"}, so ${sims.length > 1 ? "their" : "its"} numbers are simulated. Add the vendor's key to measure ${sims.length > 1 ? "them" : "it"}.`);
+    if (ADV.scope === "shortlist") add("info", `${ADV.evaluated_models.length} of ${ADV.eligible_models} eligible models were tested (the cheapest in each size, plus one on another platform). <a href="#" class="act" data-act="compare">Compare all models</a>`);
+    if (p.cheaper_unverified) add("info", `${esc(p.cheaper_unverified.label)} also met every target at ${fmt$(p.cheaper_unverified.monthly)}/month, but its price isn't verified yet.`);
+    if (p.retirement) add("warn", `The recommended model has a retirement notice: ${esc(p.retirement.title)}.`);
+    if (p.fallback_retirement) add("warn", `The fallback has a retirement notice: ${esc(p.fallback_retirement.title)}.`);
+    if (["tool_agent", "multi_agent", "router", "workflow", "agentic_rag"].includes(d.arch)) add("info", "Agent figures are partly estimated: each call is measured, but the number of steps comes from your inputs, and tool choice isn't tested yet.");
+  }
+  $("#caveats").innerHTML = items.length ? items.join("") : `<li class="info"><i>✓</i><div>Nothing flagged: measured live, enough test cases, and every target met.</div></li>`;
+}
+$("#caveats").addEventListener("click", (e) => {
+  const a = e.target.closest(".act"); if (!a) return; e.preventDefault();
+  const act = a.dataset.act;
+  if (act === "adjust") { showTab("cases"); $("#adjust").classList.remove("hidden"); $("#rtabs").scrollIntoView({ behavior: "smooth" }); }
+  if (act === "harness") { $("#harness").checked = true; advise({ goal: $("#goal").value.trim() }); }
+  if (act === "savets") saveTestSet();
+  if (act === "compare") { showTab("models"); $("#compareBtn").click(); }
+});
 function chainHtml(d) {
   const nodes = (xs) => xs.map((x) => `<span class="node ${/LLM/.test(x) ? "llm" : ""}">${esc(x)}</span>`).join('<span class="arrow">→</span>');
   if (!d.harness) return `<div class="chain">${nodes(d.flow)}</div>`;
@@ -668,10 +803,6 @@ function chainHtml(d) {
 }
 function renderHarness() {
   const h = ADV.harness || {}, d = ADV.top[0];
-  const note = !h.on && h.recommended
-    ? `⚠ <b>These are prototype numbers.</b> This agent needs production controls because ${h.reasons.length > 1 ? h.reasons.slice(0, -1).join(", ") + " and " + h.reasons.at(-1) : h.reasons[0]}. Tick <b>Production-ready</b> and re-run to see what it costs.`
-    : !h.on ? `These numbers are for the architecture alone. Tick <b>Production-ready</b> and re-run to include guardrails, evaluation and failover.` : "";
-  $("#hnote").classList.toggle("hidden", !note); $("#hnote").innerHTML = note;
   const box = $("#harnessBox");
   if (!d || !d.harness) { $("#harnessShort").textContent = "· off"; box.innerHTML = `<p class="hint">Not included in this run. Tick <b>Production-ready</b> next to the goal and re-run.</p>`; return; }
   const hz = d.harness;

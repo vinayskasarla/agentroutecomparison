@@ -42,7 +42,7 @@ Pick a model from a dropdown: GPT (OpenAI), Claude (Anthropic), Grok (xAI) or Ge
   1. **Understands the goal.** It works out the task type, fixed labels, whether it needs your documents
      (and how big they are), tools, memory or several steps, plus personal data, risk, latency, volume and
      repeat rate. It also writes 12–16 test cases with gradable expected answers. This is done by Claude
-     (`ARCHITECT_MODEL`, default `claude-opus-5`, using structured JSON output) when `ANTHROPIC_API_KEY` is
+     (`ARCHITECT_MODEL`, default `claude-sonnet-5`, using structured JSON output) when `ANTHROPIC_API_KEY` is
      set; otherwise built-in rules use sample cases from a similar task.
   2. **Tests every model** on those cases (plus Jev when there are fixed labels). It picks a **primary model**
      (the cheapest that meets the accuracy and hallucination targets), a **fallback model** from a different
@@ -258,6 +258,10 @@ Simulated models show what they would cost live. A first run also shows an estim
 - **full comparison of 24 models:** $0.35 with every model live (Claude Fable 5.1 alone is 24% of that).
 
 **Architect model:** reading the goal and writing test cases uses `ARCHITECT_MODEL` (default `claude-sonnet-5`) at `ARCHITECT_EFFORT` (default `medium`). On four sample goals, Sonnet 5 matched Opus 5's reading on 42 of 44 decisions for about $0.023 per goal vs $0.053. Set `ARCHITECT_MODEL=claude-opus-5` for the strongest reading.
+
+**Reading the results:** the page shows your goal once (Edit reopens the form), then a verdict panel: what to build, a pass/fail status, and four metrics (cost per month, accuracy, made-up answers, response time), each checked against your target. Below it one table lines up the recommendation, its fallback, the cheapest alternative and the other architectures that fit, on the same columns. Then how the design works, and a short list of what to check before relying on it. Everything else is under Details.
+
+**How many test cases:** the architect writes about 40 per goal (`TEST_CASES`, 8-60). With about 16, the same goal measured anywhere from 88% to 100% in different browser sessions; 40 narrows the 95% range by about a third. For results that don't move at all, save the test set from a run (Test cases tab → Save test set) and load it with the goal next time (More options → Use a saved test set): every run is then graded on exactly the same cases. Real cases from your own traffic are better still.
 
 **Optional password:** set `APP_PASSWORD` to require HTTP basic auth (any username) until SSO is in front of the app.
 

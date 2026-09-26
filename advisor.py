@@ -134,6 +134,10 @@ SAMPLE_FOR = {"classification": "classification", "extraction": "extraction", "g
               "open_qa": "open_qa", "generation": "open_qa", "research": "open_qa"}
 
 # ------------------------------------------------------------------ understanding the goal
+# Test cases the architect writes per goal. With ~16 the measured accuracy swung 88-100% between browser
+# sessions for the same goal; ~40 narrows the 95% range by about a third. Each case is one call per model tested.
+TEST_CASES = max(8, min(60, int(os.environ.get("TEST_CASES", "40"))))
+
 SPEC_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -176,7 +180,7 @@ SPEC_SCHEMA = {
                                "description": "If needs_documents: a short realistic sample document the test cases are answered from. Else empty."},
         "test_cases": {
             "type": "array",
-            "description": "12-16 realistic inputs with short gradable expected answers. Use 'unknown' when the correct behaviour is to decline. Separate alternatives with |.",
+            "description": f"About {TEST_CASES} realistic inputs with short gradable expected answers. Use 'unknown' when the correct behaviour is to decline. Separate alternatives with |.",
             "items": {"type": "object", "additionalProperties": False, "required": ["input", "expected"],
                       "properties": {"input": {"type": "string"}, "expected": {"type": "string"}}},
         },
@@ -192,7 +196,9 @@ Guidance:
 - Pick the single best task_type. If the output is one of a fixed set of categories, list them in labels.
 - Test cases must be realistic inputs the agent will see, each with a SHORT expected answer that can be checked
   by keyword match (a label, a number, a name, an ID, or a key phrase). Use | to separate acceptable alternatives.
-- Include 2-3 cases where the right behaviour is to decline, with expected answer "unknown" (e.g. the question
+- Write about {n_cases} test cases covering the easy, typical and hard inputs in realistic proportions, and
+  vary them (different topics, phrasings, lengths); fewer cases make the measured accuracy swing between runs.
+- Include {n_decline} cases where the right behaviour is to decline, with expected answer "unknown" (e.g. the question
   isn't covered by the documents, or the input lacks the needed information).
 - For tool_actions or research tasks, write cases that test the decision the model must get right (which
   action/tool, which record, which conclusion), still with short expected answers.
@@ -218,7 +224,8 @@ async def spec_from_claude(goal: str) -> dict:
         max_tokens=16000,
         output_config={**({} if ARCHITECT_MODEL.startswith("claude-haiku") else {"effort": ARCHITECT_EFFORT}),
                        "format": {"type": "json_schema", "schema": SPEC_SCHEMA}},
-        messages=[{"role": "user", "content": ARCHITECT_PROMPT + goal}],
+        messages=[{"role": "user", "content": ARCHITECT_PROMPT.replace("{n_cases}", str(TEST_CASES))
+                   .replace("{n_decline}", f"{max(2, round(TEST_CASES * 0.12))}-{max(3, round(TEST_CASES * 0.15))}") + goal}],
     )
     if resp.stop_reason == "refusal":
         raise RuntimeError("the architect model declined this request")

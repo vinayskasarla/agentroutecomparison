@@ -542,6 +542,23 @@ async def api_run(req: RunReq, request: Request):
     return StreamingResponse(stream(), media_type="application/x-ndjson")
 
 
+def clean_test_set(ts):
+    """The parts of a saved test set that decide grading: the same task line, reference, labels and cases give
+    the same prompts every run, so results only move when a model's answers do."""
+    cases = [{"input": str(c.get("input", ""))[:4000], "expected": str(c.get("expected", ""))[:500]}
+             for c in (ts.get("test_cases") or []) if isinstance(c, dict) and str(c.get("input", "")).strip()][:60]
+    if not cases:
+        raise ValueError("The test set has no test cases.")
+    out = {"test_cases": cases, "test_set": {"name": str(ts.get("name") or "saved test set")[:80], "count": len(cases)}}
+    if isinstance(ts.get("summary"), str) and ts["summary"].strip():
+        out["summary"] = ts["summary"][:300]
+    if isinstance(ts.get("reference_material"), str):
+        out["reference_material"] = ts["reference_material"][:20000]
+    if isinstance(ts.get("labels"), list):
+        out["labels"] = [str(x)[:60] for x in ts["labels"]][:30]
+    return out
+
+
 class AdviseReq(BaseModel):
     goal: str = ""
     spec: dict | None = None  # an edited spec from the page; skips the understanding step
@@ -552,6 +569,7 @@ class AdviseReq(BaseModel):
     multi_model: bool = True  # allow a different model per role (router, workers, escalation)
     compare: bool = False  # test every eligible model (rate-limited), instead of the first-run shortlist
     priorities: list[str] = []  # what matters most: cost, accuracy, speed, simplicity (any combination)
+    test_set: dict | None = None  # a saved test set (cases, reference, labels, task) to grade on instead of new ones
 
 
 # Advice is computed on the fly and never stored per user. Finished results are kept in memory for a while, keyed
@@ -574,7 +592,7 @@ def _knowledge_version():
 def _advice_key(req, session_id=None):
     # Scoped to the browser session: a new browser session always gets a fresh run; the same session reuses it.
     body = {"sid": session_id, "cmp": req.compare, "goal": " ".join(req.goal.lower().split()), "spec": req.spec, "harness": req.harness, "sim": req.force_sim, "mm": req.multi_model,
-            "pr": sorted(set(req.priorities)), "constraints": req.constraints or {}, "k": _knowledge_version()}
+            "pr": sorted(set(req.priorities)), "ts": req.test_set, "constraints": req.constraints or {}, "k": _knowledge_version()}
     return hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()[:32]
 
 
@@ -661,6 +679,11 @@ async def api_advise(req: AdviseReq, request: Request):
     queue: asyncio.Queue = asyncio.Queue()
     started = time.perf_counter()
     audit.log("advise_requested", request, goal=req.goal, edited=bool(req.spec), force_sim=req.force_sim, harness=req.harness)
+    if req.test_set:
+        try:
+            clean_test_set(req.test_set)
+        except (ValueError, AttributeError) as exc:
+            return JSONResponse({"error": f"That test set can't be used: {exc}"}, status_code=400)
     key = _advice_key(req, request.state.session_id)
     hit = None if req.fresh else _cache_get(key)
     ip = client_ip(request)
@@ -701,6 +724,8 @@ async def api_advise(req: AdviseReq, request: Request):
         if pin and not pinned:
             _lru_put(_spec_pins, pin, spec, 2000)
         spec = {**spec, **{k: v for k, v in (req.constraints or {}).items() if k in CONSTRAINT_KEYS and v not in (None, "")}}
+        if req.test_set and not req.spec:
+            spec = {**spec, **clean_test_set(req.test_set)}
         spec = advisor.finalize_spec({**spec, "multi_model": req.multi_model, "priorities": req.priorities})
         spec["harness"] = req.harness
         items = normalize_items(advisor.items_for(spec))

@@ -88,3 +88,28 @@ def test_password_gate(monkeypatch, client):
     assert client.get("/").status_code == 401
     assert client.get("/", auth=("anyone", "wrong")).status_code == 401
     assert client.get("/", auth=("anyone", "s3cret")).status_code == 200
+
+
+TEST_SET = {"name": "ticket routing v1", "summary": "Route support tickets to the right team.",
+            "labels": ["billing", "technical", "account", "sales"],
+            "test_cases": [{"input": f"Ticket {i}: I was charged twice", "expected": "billing"} for i in range(10)]}
+
+
+def test_saved_test_set_is_used_exactly(client):
+    r = client.post("/api/advise", json={"goal": GOAL, "force_sim": True, "test_set": TEST_SET})
+    lines = [json.loads(x) for x in r.text.splitlines() if x.strip()]
+    spec = next(x for x in lines if x["type"] == "spec")["spec"]
+    adv = next(x for x in lines if x["type"] == "advice")
+    assert spec["test_set"] == {"name": "ticket routing v1", "count": 10} and spec["summary"] == TEST_SET["summary"]
+    assert [c["expected"] for c in adv["cases"]] == ["billing"] * 10
+
+
+def test_bad_test_set_is_refused(client):
+    code, body = advise(client, test_set={"test_cases": []})
+    assert code == 400 and "test set" in body["error"]
+
+
+def test_priorities_are_part_of_the_cached_result(client):
+    _, a = advise(client)
+    _, b = advise(client, priorities=["accuracy"])
+    assert a["key"] != b["key"]
