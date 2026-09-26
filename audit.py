@@ -18,7 +18,7 @@ USER_HEADERS = [h.strip().lower() for h in os.environ.get(
 ).split(",") if h.strip()]
 REDACT_PII = os.environ.get("AUDIT_REDACT_PII", "true").lower() != "false"
 MAX_TEXT = 2000
-ALLOWED_CLIENT_EVENTS = {"adr_downloaded", "cases_uploaded", "adjust_opened", "example_used", "knowledge_opened", "details_opened"}
+ALLOWED_CLIENT_EVENTS = {"adr_downloaded", "cases_uploaded", "compare_requested", "adjust_opened", "example_used", "knowledge_opened", "details_opened"}
 
 
 def identity(headers) -> dict:

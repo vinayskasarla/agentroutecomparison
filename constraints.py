@@ -195,3 +195,29 @@ def retirement(model_id):
         if item["category"] == "retirement" and any(_norm(x["name"]) in names for x in item["models"]):
             return {"date": item["date"], "title": item["title"], "link": item["link"]}
     return None
+
+
+# ------------------------------------------------------------------ first-run shortlist
+def shortlist(model_ids, spec, live_ok, size=4):
+    """A small, representative set to test on the first run: the cheapest model in each tier (small, medium,
+    large), preferring models this server can call live and verified prices, plus the cheapest model on
+    another platform so a fallback can be measured too. The full comparison is run on request."""
+    blended = lambda m: catalog.MODEL_BY_ID[m]["in"] + 0.25 * catalog.MODEL_BY_ID[m]["out"]  # noqa: E731
+    order = lambda m: (not live_ok(m), catalog.MODEL_BY_ID[m].get("status") != "verified", blended(m))  # noqa: E731
+    tiers = ("small", "medium", "large") if not (spec["needs_tools"] or spec["multi_step"]) else ("small", "medium", "large", "frontier")
+    picked = []
+    for tier in tiers:
+        pool = sorted([m for m in model_ids if catalog.MODEL_BY_ID[m]["tier"] == tier and m not in picked], key=order)
+        if pool and len(picked) < size - 1:
+            picked.append(pool[0])
+    platforms = {catalog.MODEL_BY_ID[m]["platform"] for m in picked}
+    other = sorted([m for m in model_ids if m not in picked and catalog.MODEL_BY_ID[m]["platform"] not in platforms
+                    and catalog.MODEL_BY_ID[m]["tier"] != "small"], key=order)
+    if other:
+        picked.append(other[0])
+    for m in sorted(model_ids, key=order):  # top up if a tier was empty
+        if len(picked) >= size:
+            break
+        if m not in picked:
+            picked.append(m)
+    return picked

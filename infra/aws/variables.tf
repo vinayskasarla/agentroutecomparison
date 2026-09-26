@@ -51,3 +51,15 @@ variable "audit_user_headers" {
   type        = string
   default     = "x-amzn-oidc-data,x-amzn-oidc-identity,x-forwarded-email,x-auth-request-email,x-forwarded-user"
 }
+
+variable "compare_limit_per_day" {
+  description = "Full model comparisons allowed per client IP per rolling 24 hours. Behind a shared office IP everyone shares this limit."
+  type        = number
+  default     = 5
+}
+
+variable "architect_model" {
+  description = "Claude model that reads the goal and writes test cases. claude-sonnet-5 matched claude-opus-5 on 42 of 44 decisions at ~43% of the cost."
+  type        = string
+  default     = "claude-sonnet-5"
+}

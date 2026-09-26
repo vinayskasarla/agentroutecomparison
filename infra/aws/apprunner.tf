@@ -30,6 +30,10 @@ resource "aws_apprunner_service" "app" {
           # personal data from goals and prompts before they're written to the audit log.
           AUDIT_USER_HEADERS = var.audit_user_headers
           AUDIT_REDACT_PII   = "true"
+          # Full model comparisons allowed per client IP per rolling 24 hours (first runs test a shortlist).
+          COMPARE_LIMIT_PER_DAY = tostring(var.compare_limit_per_day)
+          TRUSTED_PROXY_HOPS    = "1"
+          ARCHITECT_MODEL       = var.architect_model
         }
         # Each env var is filled from its secret when a deployment starts.
         runtime_environment_secrets = { for k, s in aws_secretsmanager_secret.keys : k => s.arn }

@@ -544,6 +544,7 @@ class AdviseReq(BaseModel):
     constraints: dict | None = None  # data class, region, images, existing platform pieces, commitment, engineer-week rate
     fresh: bool = False  # skip the result cache
     multi_model: bool = True  # allow a different model per role (router, workers, escalation)
+    compare: bool = False  # test every eligible model (rate-limited), instead of the first-run shortlist
 
 
 # Advice is computed on the fly and never stored per user. Finished results are kept in memory for a while, keyed
@@ -565,9 +566,37 @@ def _knowledge_version():
 
 def _advice_key(req, session_id=None):
     # Scoped to the browser session: a new browser session always gets a fresh run; the same session reuses it.
-    body = {"sid": session_id, "goal": " ".join(req.goal.lower().split()), "spec": req.spec, "harness": req.harness, "sim": req.force_sim, "mm": req.multi_model,
+    body = {"sid": session_id, "cmp": req.compare, "goal": " ".join(req.goal.lower().split()), "spec": req.spec, "harness": req.harness, "sim": req.force_sim, "mm": req.multi_model,
             "constraints": req.constraints or {}, "k": _knowledge_version()}
     return hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()[:32]
+
+
+# Full model comparisons are limited per client IP in a rolling 24 hours (in memory; a restart resets it).
+COMPARE_LIMIT = int(os.environ.get("COMPARE_LIMIT_PER_DAY", 5))
+TRUSTED_PROXY_HOPS = int(os.environ.get("TRUSTED_PROXY_HOPS", 1))  # App Runner's load balancer appends the real client IP
+_compare_log: dict = {}
+_provider_down: dict = {}  # provider -> time its live calls last all failed; skipped in shortlists for 10 minutes
+
+
+def client_ip(request: Request) -> str:
+    """The caller's IP: the entry our own proxy appended to X-Forwarded-For (clients can forge the rest)."""
+    xff = [x.strip() for x in request.headers.get("x-forwarded-for", "").split(",") if x.strip()]
+    if TRUSTED_PROXY_HOPS and len(xff) >= TRUSTED_PROXY_HOPS:
+        return xff[-TRUSTED_PROXY_HOPS]
+    return request.client.host if request.client else "unknown"
+
+
+def compare_quota(ip: str) -> dict:
+    now = time.time()
+    runs = [t for t in _compare_log.get(ip, []) if now - t < 24 * 3600]
+    _compare_log[ip] = runs
+    return {"limit": COMPARE_LIMIT, "used": len(runs), "left": max(0, COMPARE_LIMIT - len(runs)),
+            "resets_in_s": int(24 * 3600 - (now - runs[0])) if runs else None}
+
+
+@app.get("/api/compare-quota")
+async def api_compare_quota(request: Request):
+    return compare_quota(client_ip(request))
 
 
 def _cache_get(key):
@@ -602,6 +631,14 @@ async def api_advise(req: AdviseReq, request: Request):
     audit.log("advise_requested", request, goal=req.goal, edited=bool(req.spec), force_sim=req.force_sim, harness=req.harness)
     key = _advice_key(req, request.state.session_id)
     hit = None if req.fresh else _cache_get(key)
+    ip = client_ip(request)
+    if req.compare and not hit:  # a cached comparison doesn't use up the quota
+        q = compare_quota(ip)
+        if not q["left"]:
+            audit.log("compare_limited", request, goal=req.goal, ip=ip)
+            return JSONResponse({"error": f"You've used all {COMPARE_LIMIT} full comparisons for today. More become available in "
+                                          f"{round(q['resets_in_s'] / 3600, 1)} hours.", "quota": q}, status_code=429)
+        _compare_log.setdefault(ip, []).append(time.time())
     if hit:
         audit.log("advise_cache_hit", request, goal=req.goal, key=key)
 
@@ -629,7 +666,7 @@ async def api_advise(req: AdviseReq, request: Request):
         spec["harness"] = req.harness
         items = normalize_items(advisor.items_for(spec))
         confirm = advisor.cross_check(spec, req.goal) if source == "claude" and req.goal else []
-        spec_event = {"type": "spec", "spec": spec, "source": source, "note": note, "confirm": confirm,
+        spec_event = {"type": "spec", "spec": spec, "source": "compare" if req.compare else source, "note": note, "confirm": confirm,
                       "architect_model": advisor.ARCHITECT_MODEL if source == "claude" else None}
         await queue.put(spec_event)
 
@@ -640,6 +677,11 @@ async def api_advise(req: AdviseReq, request: Request):
         models, excluded = constraints.screen([m["id"] for m in catalog.CALLABLE if policy.model_allowed(m["id"])], spec)
         if not models:
             raise ValueError("No approved model can take this data class and region. Relax the data constraints.")
+        eligible = len(models)
+        if not req.compare:  # first run: a small representative shortlist; the full comparison is on request
+            live_ok = lambda m: (not req.force_sim and has_key(catalog.MODEL_BY_ID[m]["provider"])  # noqa: E731
+                                 and time.time() - _provider_down.get(catalog.MODEL_BY_ID[m]["provider"], 0) > 600)
+            models = constraints.shortlist(models, spec, live_ok)
         use_jev = (policy.service_allowed("jev") and bool(spec["labels"])
                    and all(i.get("options") and i.get("accept") for i in items))
         jev_blocked = bool(spec["labels"]) and not policy.service_allowed("jev")
@@ -682,6 +724,8 @@ async def api_advise(req: AdviseReq, request: Request):
         for m in unavailable:
             res[m] = list(await asyncio.gather(*[one_llm(m, it, force_sim=True) for it in items]))
         mode = {m: "simulated" if all(r["simulated"] for r in rs) else "live" for m, rs in res.items()}
+        for m in unavailable:
+            _provider_down[catalog.MODEL_BY_ID[m]["provider"]] = time.time()
         jev = list(await asyncio.gather(*[one_jev(it) for it in items])) if use_jev else None
         await queue.put({"type": "stage", "stage": "rank"})
         result = advisor.rank_designs(spec, res, jev, mode, jev_blocked=jev_blocked)
@@ -709,6 +753,7 @@ async def api_advise(req: AdviseReq, request: Request):
                          "meets_requirements": d["passes"]} for i, d in enumerate(result["top"])],
                   duration_ms=round((time.perf_counter() - started) * 1000))
         advice = {"type": "advice", **result, "evaluated_models": models, "key": key,
+                  "scope": "full" if req.compare else "shortlist", "eligible_models": eligible, "compare_quota": compare_quota(ip),
                          "simulated": any(v == "simulated" for v in mode.values()), "mode": mode,
                          "live_count": sum(v == "live" for v in mode.values()),
                          "cases": [{"input": c["input"], "expected": c["expected"]} for c in spec["test_cases"]],

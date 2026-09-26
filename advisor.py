@@ -617,8 +617,8 @@ def model_table(first, spec, res, jev, picks, mode):
         rows.append(row(m, d, True))
     tested_ids = list(res)
     for info in catalog.MODELS:
-        if (info.get("callable", True) or info["id"] in res
-                or not policy.check_data(info["id"], spec["data_class"], spec["residency"])[0]):
+        # Not tested this run: reported models, and (on a shortlist run) models not compared yet.
+        if info["id"] in res or not constraints.screen([info["id"]], spec)[0]:
             continue
         same = [t for t in tested_ids if catalog.MODEL_BY_ID[t]["tier"] == info["tier"]] or tested_ids
         ref = next((t for t in same if catalog.MODEL_BY_ID[t]["maker"] == info["maker"]), same[0])

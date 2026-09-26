@@ -122,7 +122,8 @@
     <!-- 4. Every model -->
     <section class="card">
       <div class="cardhead">
-        <div><h2 id="tableTitle">Every model for this agent</h2><p class="hint" id="tableHint" style="margin:0"></p></div>
+        <div><h2 id="tableTitle">Every model for this agent</h2><p class="hint" id="tableHint" style="margin:0"></p>
+          <div class="cmpbar" id="cmpBar"><button class="primary" id="compareBtn">Compare all models</button><span class="hint" id="cmpNote"></span></div></div>
         <div class="tfilters">
           <div class="seg" id="platformSeg"></div>
           <label class="check" style="margin:0"><input type="checkbox" id="onlyMeets"> <span>Only models that meet every requirement</span></label>
@@ -243,7 +244,7 @@ const BUILD = {
   agentic_rag: ["Give the model search tools over each source (documents, SQL view).", "Cap searches per question; require a citation for every claim.", "Evaluate retrieval hit rate and answer accuracy separately."],
   batch: ["Queue requests; submit via the providers' batch APIs (~50% off).", "Store results in S3; retry failures next batch.", "Keep an on-demand path for urgent requests."],
 };
-let CFG, KNOW, ADV = null, SPEC = null, SRC = null, PLATFORM = "All", PAGE = 1;
+let CFG, KNOW, ADV = null, SPEC = null, SRC = null, PLATFORM = "All", PAGE = 1, QUOTA = null;
 const PER_PAGE = 10;
 
 // ---------------------------------------------------------------- setup
@@ -256,6 +257,22 @@ $("#addCase").onclick = () => addCase("", "");
 $("#caseTable").addEventListener("click", (e) => { if (e.target.closest(".rm")) e.target.closest("tr").remove(); });
 $("#rerun").onclick = () => advise({ goal: $("#goal").value.trim(), spec: readAdjust() });
 $("#adr").onclick = downloadADR;
+$("#compareBtn").onclick = () => {
+  if (!ADV || !SPEC) return;
+  $("#compareBtn").disabled = true; $("#cmpNote").textContent = "Comparing every eligible model on the same test cases…";
+  track("compare_requested", { models: ADV.eligible_models });
+  advise({ goal: $("#goal").value.trim(), spec: SPEC, compare: true });
+};
+function loadQuota() { return fetch("/api/compare-quota").then((r) => r.json()).then((q) => { QUOTA = q; if (ADV) renderCompareBar(); }).catch(() => {}); }
+function renderCompareBar(msg) {
+  const full = ADV && ADV.scope === "full", q = QUOTA;
+  $("#compareBtn").classList.toggle("hidden", full);
+  const left = q ? `${q.left} of ${q.limit} full comparisons left today` : "";
+  $("#compareBtn").disabled = !!(q && !q.left);
+  $("#cmpNote").innerHTML = msg ? `<span class="no">${esc(msg)}</span>`
+    : full ? `✓ All ${ADV.eligible_models} eligible models compared on the same test cases.`
+    : `This run tested a shortlist of ${ADV.evaluated_models.length} of ${ADV.eligible_models} eligible models (cheapest per tier, plus one on another platform). Compare all to measure every model.${left ? " · " + left : ""}${q && !q.left && q.resets_in_s ? ` — more in ${Math.ceil(q.resets_in_s / 3600)} h` : ""}`;
+}
 $("#csv").onchange = (e) => { const f = e.target.files[0]; if (f) f.text().then(loadCsv); e.target.value = ""; };
 seg("#decSeg", (v) => { $("#overrideBox").classList.toggle("hidden", v !== "override"); });
 $("#d_arch").onchange = () => {};
@@ -392,6 +409,7 @@ async function advise(body) {
   document.querySelectorAll("#stepper li").forEach((li) => (li.className = ""));
   try {
     const resp = await fetch("/api/advise", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!resp.ok) { const j = await resp.json().catch(() => ({})); if (j.quota) QUOTA = j.quota; const err = new Error(j.error || resp.statusText); err.quota = !!j.quota; throw err; }
     const reader = resp.body.getReader(), dec = new TextDecoder(); let buf = "";
     while (true) {
       const { value, done } = await reader.read(); if (done) break;
@@ -410,8 +428,10 @@ async function advise(body) {
     await loadKnowledge();
     render();
     $("#results").scrollIntoView({ behavior: "smooth", block: "start" });
-  } catch (e) { alert("Advice failed: " + e.message); }
-  $("#go").disabled = $("#rerun").disabled = false;
+  } catch (e) {
+    if (e.quota) { renderCompareBar(e.message); } else { alert("Advice failed: " + e.message); }
+  }
+  $("#go").disabled = $("#rerun").disabled = false; $("#compareBtn").disabled = false;
 }
 
 // ---------------------------------------------------------------- render
@@ -433,7 +453,7 @@ function render() {
   $("#confirm").classList.toggle("hidden", !conf.length);
   $("#confirm").innerHTML = conf.length ? `<b>Please confirm:</b> ${conf.map((c) => `${esc(c.label)} read as <b>${esc(String(c.architect))}</b> (rules suggest ${esc(String(c.rules))})`).join(" · ")}. <a href="#" id="fixit">Adjust</a>` : "";
   if (conf.length) $("#fixit").onclick = (e) => { e.preventDefault(); document.querySelector('details[data-d="understood"]').open = true; $("#adjust").classList.remove("hidden"); };
-  PAGE = 1; renderCacheBar(); renderHero(); renderArchitectures(); renderSystem(); renderRobust(); renderPlatforms(); renderTable(); renderDetails(); renderHarness(); renderDecision();
+  PAGE = 1; loadQuota(); renderCacheBar(); renderHero(); renderArchitectures(); renderSystem(); renderRobust(); renderPlatforms(); renderTable(); renderDetails(); renderHarness(); renderDecision();
 }
 
 function tile(k, v, sub, state) {
@@ -492,7 +512,7 @@ function renderHero() {
           ${tile("95% within", dur(d.p95_ms), `median ${dur(d.p50_ms)}`)}
           ${tile("Per 1K correct", d.accuracy ? fmt$(d.cost_per_req * 1000 / d.accuracy) : "—", `hallucinations ${pct(d.halluc)}`)}
         </div>
-        <p class="whywin">${why}</p>
+        <p class="whywin">${why}${ADV.scope === "shortlist" ? `<br><span class="hint">Picked from a shortlist of ${ADV.evaluated_models.length} of ${ADV.eligible_models} models — use <b>Compare all models</b> under the table to check every one.</span>` : ""}</p>
         ${heroFacts(d, p)}
       </article>
       <article class="runner">
@@ -641,7 +661,7 @@ function renderTable() {
     ` Target: ${pct(SPEC.accuracy_target)} accuracy, at most ${pct(SPEC.max_hallucination)} hallucinations, 95% within ${dur(SPEC.latency_budget_ms)}.`;
   const max = Math.max(...ADV.model_table.map((r) => r.monthly));
   const result = (r) => r.id === p.primary ? '<span class="tagp">Best model</span>' : r.id === p.fallback ? '<span class="tagf">Fallback</span>'
-    : !r.tested ? '<span class="hint">not tested</span>' : r.meets ? '<span class="yes">meets all</span>'
+    : !r.tested ? (ADV.scope === "shortlist" && r.status !== "reported" ? '<span class="hint">not compared yet</span>' : '<span class="hint">not tested</span>') : r.meets ? '<span class="yes">meets all</span>'
     : `<span class="no">misses ${esc(r.checks.filter((c) => !c.pass).map((c) => c.label.toLowerCase()).join(", "))}</span>`;
   $("#mtable").innerHTML = `<thead><tr><th>#</th><th>Model · platform</th><th>Price per 1M (in / out)</th><th>Measured</th>
     <th class="num">Accuracy</th><th class="num">Halluc.</th><th class="num">95% within</th><th class="num">Per 1K correct</th><th>Per month</th><th>Result</th></tr></thead><tbody>` +
