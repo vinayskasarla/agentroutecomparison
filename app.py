@@ -661,6 +661,7 @@ async def api_advise(req: AdviseReq, request: Request):
                 note = f"The Claude architect failed ({type(exc).__name__}: {str(exc)[:160]}); used built-in rules instead."
         else:
             spec, source = advisor.spec_from_rules(req.goal), "rules"
+        arch_usage = spec.pop("_usage", None) if isinstance(spec, dict) else None
         spec = {**spec, **{k: v for k, v in (req.constraints or {}).items() if k in CONSTRAINT_KEYS and v not in (None, "")}}
         spec = advisor.finalize_spec({**spec, "multi_model": req.multi_model})
         spec["harness"] = req.harness
@@ -677,7 +678,7 @@ async def api_advise(req: AdviseReq, request: Request):
         models, excluded = constraints.screen([m["id"] for m in catalog.CALLABLE if policy.model_allowed(m["id"])], spec)
         if not models:
             raise ValueError("No approved model can take this data class and region. Relax the data constraints.")
-        eligible = len(models)
+        eligible, all_eligible = len(models), list(models)
         if not req.compare:  # first run: a small representative shortlist; the full comparison is on request
             live_ok = lambda m: (not req.force_sim and has_key(catalog.MODEL_BY_ID[m]["provider"])  # noqa: E731
                                  and time.time() - _provider_down.get(catalog.MODEL_BY_ID[m]["provider"], 0) > 600)
@@ -730,6 +731,9 @@ async def api_advise(req: AdviseReq, request: Request):
         await queue.put({"type": "stage", "stage": "rank"})
         result = advisor.rank_designs(spec, res, jev, mode, jev_blocked=jev_blocked)
         result["harness"] = advisor.harness_advice(spec)
+        result["run_cost"] = advisor.run_cost(arch_usage, res, mode, "full" if req.compare else "shortlist")
+        if not req.compare:
+            result["run_cost"]["compare_estimate"] = advisor.compare_estimate(res, all_eligible)
         result["robustness"] = advisor.robustness(spec, res, jev, mode, jev_blocked, result)
         result["excluded_models"] = excluded
         result["policy"] = {"name": policy.POLICY["name"], "approved_platforms": sorted(policy.APPROVED_PLATFORMS),

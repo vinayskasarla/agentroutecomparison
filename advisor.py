@@ -19,6 +19,44 @@ import policy
 # cost ($0.023 vs $0.053 per goal). Set ARCHITECT_MODEL=claude-opus-5 for the strongest reading.
 ARCHITECT_MODEL = os.environ.get("ARCHITECT_MODEL", "claude-sonnet-5")
 ARCHITECT_EFFORT = os.environ.get("ARCHITECT_EFFORT", "medium")
+# $ per 1M tokens (in, out) for architect models that aren't in the catalog as tested offerings.
+ARCHITECT_PRICES = {"claude-opus-5": (5, 25), "claude-sonnet-5": (2, 10), "claude-haiku-4-5": (1, 5)}
+
+
+def compare_estimate(res, eligible):
+    """What testing every eligible model on the same cases would cost, from this run's measured token use."""
+    rows = [r for rs in res.values() for r in rs]
+    if not rows:
+        return None
+    n = max(len(rs) for rs in res.values())
+    tin, tout = statistics.fmean(r["in_tokens"] for r in rows), statistics.fmean(r["out_tokens"] for r in rows)
+    per = {m: n * (tin * catalog.MODEL_BY_ID[m]["in"] + tout * catalog.MODEL_BY_ID[m]["out"]) / 1e6 for m in eligible}
+    top = max(per, key=per.get)
+    return {"models": len(eligible), "cost": sum(per.values()), "largest": catalog.MODEL_BY_ID[top]["label"], "largest_cost": per[top]}
+
+
+def run_cost(arch_usage, res, mode, scope):
+    """What this run cost, per action, from actual token usage. Simulated calls cost nothing; what they would
+    have cost live is reported separately so the numbers can be projected."""
+    steps = []
+    if arch_usage:
+        pin, pout = ARCHITECT_PRICES.get(arch_usage["model"], (catalog.MODEL_BY_ID.get(arch_usage["model"], {}).get("in", 0),
+                                                                catalog.MODEL_BY_ID.get(arch_usage["model"], {}).get("out", 0)))
+        steps.append({"step": "Understand the goal and write test cases", "kind": "architect", "model": arch_usage["model"],
+                      "calls": 1, "in": arch_usage["in"], "out": arch_usage["out"], "live": True,
+                      "cost": (arch_usage["in"] * pin + arch_usage["out"] * pout) / 1e6})
+    for m, rows in res.items():
+        info = catalog.MODEL_BY_ID[m]
+        tin, tout = sum(r["in_tokens"] for r in rows), sum(r["out_tokens"] for r in rows)
+        priced = (tin * info["in"] + tout * info["out"]) / 1e6
+        live = mode.get(m) == "live"
+        steps.append({"step": f"Test {info['label']} ({info['platform']})", "kind": "test", "model": m, "calls": len(rows),
+                      "in": tin, "out": tout, "live": live, "cost": priced if live else 0.0, "if_live": priced})
+    steps.sort(key=lambda x: -(x["cost"] or x.get("if_live", 0)))
+    total = sum(x["cost"] for x in steps)
+    projected = sum(x["cost"] if x["live"] else x.get("if_live", 0) for x in steps)
+    return {"scope": scope, "total": total, "if_all_live": projected, "steps": steps, "compare_estimate": None,
+            "note": "Ranking, pricing, what-ifs and the system design are computed on the server at no model cost."}
 
 TASK_TYPES = ["classification", "extraction", "grounded_qa", "open_qa", "summarization", "generation",
               "tool_actions", "research", "conversation"]
@@ -170,7 +208,9 @@ async def spec_from_claude(goal: str) -> dict:
     if resp.stop_reason == "refusal":
         raise RuntimeError("the architect model declined this request")
     text = next(b.text for b in resp.content if b.type == "text")
-    return json.loads(text)
+    spec = json.loads(text)
+    spec["_usage"] = {"model": ARCHITECT_MODEL, "in": resp.usage.input_tokens, "out": resp.usage.output_tokens}
+    return spec
 
 
 def _has(text, *words):

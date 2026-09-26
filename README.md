@@ -223,6 +223,14 @@ Advice is computed on the fly. Nothing about a decision is stored per user, and 
 
 **First run vs full comparison:** a new goal tests a **shortlist** of about 4 models: the cheapest in each tier, preferring ones this server can call live, plus one on another platform so a fallback is measured. The model table still prices every model, marking the rest "not compared yet". **Compare all models** (under the table) tests every eligible model on the same test cases. It's limited to `COMPARE_LIMIT_PER_DAY` (default 5) per client IP per rolling 24 hours, in memory. The IP is the one App Runner's proxy appends to `X-Forwarded-For` (`TRUSTED_PROXY_HOPS`). Reopening a cached comparison doesn't count against the limit.
 
+**Cost of this run:** every result shows what the run cost, per action, from actual token usage at list prices:
+- reading the goal and writing test cases;
+- testing each model.
+
+Simulated models show what they would cost live. A first run also shows an estimate for the full comparison. Ranking, pricing, what-ifs and the system design run on the server at no model cost. Measured on 2026-09-26 for an agentic support goal (16 test cases):
+- **first run:** $0.044, or $0.053 with every model live (about half of it is reading the goal);
+- **full comparison of 24 models:** $0.35 with every model live (Claude Fable 5.1 alone is 24% of that).
+
 **Architect model:** reading the goal and writing test cases uses `ARCHITECT_MODEL` (default `claude-sonnet-5`) at `ARCHITECT_EFFORT` (default `medium`). On four sample goals, Sonnet 5 matched Opus 5's reading on 42 of 44 decisions for about $0.023 per goal vs $0.053. Set `ARCHITECT_MODEL=claude-opus-5` for the strongest reading.
 
 **Optional password:** set `APP_PASSWORD` to require HTTP basic auth (any username) until SSO is in front of the app.

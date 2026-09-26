@@ -442,3 +442,14 @@ ul.trace li { border: 1px solid var(--border); border-radius: 10px; padding: 10p
 .effects { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 2px; }
 .cmpbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 10px; }
 .cmpbar .hidden, #compareBtn.hidden { display: none; }
+#costCard.hidden { display: none; }
+.costtotal { text-align: right; }
+.costtotal .tv { font-size: 28px; font-weight: 700; line-height: 1.1; }
+.costlist { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.costlist li { display: grid; grid-template-columns: minmax(180px, 2.2fr) 3fr 110px 44px; gap: 10px; align-items: center; font-size: 14px; }
+.cbarwrap { height: 12px; }
+.cbar2 { display: block; height: 12px; border-radius: 0 4px 4px 0; background: var(--accent); }
+.cbar2.sim { background: transparent; border: 1.5px dashed var(--accent); box-sizing: border-box; }
+.cval { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.cpct { text-align: right; font-variant-numeric: tabular-nums; }
+@media (max-width: 700px) { .costlist li { grid-template-columns: 1fr 70px 40px; } .costlist .cbarwrap { grid-column: 1 / -1; order: 5; } }

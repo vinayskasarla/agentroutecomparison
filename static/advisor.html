@@ -133,6 +133,14 @@
       <div class="pager" id="pager"></div>
     </section>
 
+    <!-- What this run cost, per action -->
+    <section class="card" id="costCard">
+      <div class="cardhead"><div><h2>Cost of this run</h2><p class="hint" id="costHint" style="margin:0"></p></div>
+        <div class="costtotal"><div class="tv" id="costTotal"></div><div class="hint" id="costSub"></div></div></div>
+      <ul class="costlist" id="costList"></ul>
+      <p class="hint" id="costFoot" style="margin:10px 0 0"></p>
+    </section>
+
     <!-- Decision: kept only in the downloaded record -->
     <section class="card" id="decision">
       <div class="cardhead"><div><h2>Your decision</h2><p class="hint" style="margin:0">Goes into the decision record you download. Nothing is saved on the server.</p></div></div>
@@ -271,7 +279,7 @@ function renderCompareBar(msg) {
   $("#compareBtn").disabled = !!(q && !q.left);
   $("#cmpNote").innerHTML = msg ? `<span class="no">${esc(msg)}</span>`
     : full ? `✓ All ${ADV.eligible_models} eligible models compared on the same test cases.`
-    : `This run tested a shortlist of ${ADV.evaluated_models.length} of ${ADV.eligible_models} eligible models (cheapest per tier, plus one on another platform). Compare all to measure every model.${left ? " · " + left : ""}${q && !q.left && q.resets_in_s ? ` — more in ${Math.ceil(q.resets_in_s / 3600)} h` : ""}`;
+    : `This run tested a shortlist of ${ADV.evaluated_models.length} of ${ADV.eligible_models} eligible models (cheapest per tier, plus one on another platform). Compare all to measure every model${ADV.run_cost && ADV.run_cost.compare_estimate ? ` (about ${money(ADV.run_cost.compare_estimate.cost)})` : ""}.${left ? " · " + left : ""}${q && !q.left && q.resets_in_s ? ` — more in ${Math.ceil(q.resets_in_s / 3600)} h` : ""}`;
 }
 $("#csv").onchange = (e) => { const f = e.target.files[0]; if (f) f.text().then(loadCsv); e.target.value = ""; };
 seg("#decSeg", (v) => { $("#overrideBox").classList.toggle("hidden", v !== "override"); });
@@ -453,7 +461,7 @@ function render() {
   $("#confirm").classList.toggle("hidden", !conf.length);
   $("#confirm").innerHTML = conf.length ? `<b>Please confirm:</b> ${conf.map((c) => `${esc(c.label)} read as <b>${esc(String(c.architect))}</b> (rules suggest ${esc(String(c.rules))})`).join(" · ")}. <a href="#" id="fixit">Adjust</a>` : "";
   if (conf.length) $("#fixit").onclick = (e) => { e.preventDefault(); document.querySelector('details[data-d="understood"]').open = true; $("#adjust").classList.remove("hidden"); };
-  PAGE = 1; loadQuota(); renderCacheBar(); renderHero(); renderArchitectures(); renderSystem(); renderRobust(); renderPlatforms(); renderTable(); renderDetails(); renderHarness(); renderDecision();
+  PAGE = 1; loadQuota(); renderCacheBar(); renderHero(); renderArchitectures(); renderSystem(); renderRobust(); renderPlatforms(); renderTable(); renderDetails(); renderHarness(); renderDecision(); renderCost();
 }
 
 function tile(k, v, sub, state) {
@@ -624,6 +632,27 @@ function renderSystem() {
     <div><h3 class="h3">Models per role</h3>${roles}
       ${ig ? `<h3 class="h3" style="margin-top:14px">Tools and integration</h3>${tools}` : ""}
       ${rt ? `<h3 class="h3" style="margin-top:14px">Retrieval</h3>${ret}` : ""}</div></div>`;
+}
+function money(x) { return x == null ? "—" : x >= 1 ? "$" + x.toFixed(2) : x >= 0.01 ? "$" + x.toFixed(3) : x > 0 ? "$" + x.toFixed(4) : "$0"; }
+function renderCost() {
+  const c = ADV.run_cost; $("#costCard").classList.toggle("hidden", !c);
+  if (!c) return;
+  const cached = !!ADV.cached_at;
+  $("#costTotal").textContent = cached ? "$0" : money(c.total);
+  $("#costSub").innerHTML = cached ? `reopened from cache · the original run cost ${money(c.total)}` : c.scope === "full" ? "full comparison" : "first run (shortlist)";
+  $("#costHint").textContent = "Actual token usage for each action in this run, at list prices. Dashed bars are simulated models, shown at what they would cost live; percentages are shares of the all-live cost.";
+  const val = (x) => x.live ? x.cost : x.if_live || 0;
+  const max = Math.max(...c.steps.map(val), 1e-9), sum = c.steps.reduce((a, x) => a + val(x), 0) || 1e-9;
+  $("#costList").innerHTML = c.steps.map((x) => `<li data-tip="${esc(`${x.calls} call${x.calls > 1 ? "s" : ""} · ${x.in.toLocaleString()} input + ${x.out.toLocaleString()} output tokens${x.live ? "" : " · simulated, so no cost; this is what it would cost live"}`)}">
+      <span class="cstep">${esc(x.step)}${x.kind === "architect" ? ` <span class="hint">· ${esc(x.model)}</span>` : ""}</span>
+      <span class="cbarwrap"><span class="cbar2 ${x.live ? "" : "sim"}" style="width:${Math.max(1.5, 100 * val(x) / max)}%"></span></span>
+      <span class="cval">${x.live ? money(x.cost) : `<span class="hint">sim · ${money(x.if_live)} live</span>`}</span>
+      <span class="cpct hint">${Math.round(100 * val(x) / sum)}%</span></li>`).join("");
+  const foot = [];
+  if (c.if_all_live - c.total > 0.00005) foot.push(`If the simulated models had been called live, this run would have cost <b>${money(c.if_all_live)}</b>.`);
+  if (c.compare_estimate) foot.push(`A full comparison of all ${c.compare_estimate.models} eligible models would cost about <b>${money(c.compare_estimate.cost)}</b> (largest: ${esc(c.compare_estimate.largest)}, ${money(c.compare_estimate.largest_cost)}).`);
+  foot.push(esc(c.note));
+  $("#costFoot").innerHTML = foot.join(" ");
 }
 function renderRobust() {
   const r = ADV.robustness || [];
