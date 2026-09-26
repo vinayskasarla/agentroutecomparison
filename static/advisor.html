@@ -621,7 +621,7 @@ function renderBrief() {
   const goal = (SRC && SRC.goal) || $("#goal").value.trim() || SPEC.summary;
   if (!$("#goal").value.trim()) $("#goal").value = goal;
   $("#briefGoal").textContent = goal;
-  $("#briefUnd").textContent = goal !== SPEC.summary ? "Understood as: " + SPEC.summary : "";
+  $("#briefUnd").innerHTML = goal !== SPEC.summary ? `<span class="und" data-tip="${esc("Understood as: " + SPEC.summary)}">ⓘ How it was understood</span>` : "";
   const stab = ADV.stability || {}, n = (ADV.top[0] || {}).n || (SPEC.test_cases || []).length;
   const chips = [
     `<span class="bchip"><b>Priority</b> ${(SPEC.priorities || []).length ? SPEC.priorities.map((k) => PRIO[k]).join(" + ") : "Balanced"}</span>`,
@@ -639,45 +639,53 @@ function showBrief(on) {
   $("#goalcard").classList.toggle("hidden", on);
 }
 
+// A horizontal meter: the value as a bar, the target as a marker, an optional likely range, optional ticks.
+function meter({ value, max, target, lo, hi, ticks = [] }) {
+  const x = (v) => Math.max(0, Math.min(100, (100 * v) / max)).toFixed(2) + "%";
+  return `<div class="meter">
+    ${lo != null ? `<span class="m-range" style="left:${x(lo)};width:calc(${x(hi)} - ${x(lo)})"></span>` : ""}
+    <span class="m-fill" style="width:${x(value)}"></span>
+    ${ticks.map((t) => `<span class="m-tick" style="left:${x(t.v)}" data-tip="${esc(t.label)}"><em>${esc(t.short)}</em></span>`).join("")}
+    ${target != null ? `<span class="m-target" style="left:${x(target)}"></span>` : ""}
+  </div>`;
+}
+function gauge(k, tip, value, meterHtml, c, targetText) {
+  const unsure = c && c.key === "accuracy" && c.pass && !c.sure;
+  const st = !c ? "" : !c.pass ? `<span class="st bad"><i>✗</i>${targetText}</span>` : unsure ? `<span class="st unsure" data-tip="Passes as measured, but the likely range dips below the target. More test cases would confirm it."><i>≈</i>${targetText}</span>` : `<span class="st ok"><i>✓</i>${targetText}</span>`;
+  return `<div class="gauge"><div class="g-k" data-tip="${esc(tip)}">${k}</div><div class="g-v">${value}</div>${meterHtml}<div class="g-t">${st || `<span class="hint">${targetText}</span>`}</div></div>`;
+}
 function renderVerdict() {
   const d = ADV.top[0], p = ADV.models, el = $("#verdict");
-  if (!d) { el.innerHTML = `<div class="v-empty">No architecture fits this goal with the models allowed for its data. See Details → More for what was ruled out.</div>`; return; }
-  const st = strength(), g = ADV.grading || {}, r = row(p.primary) || {}, fr = p.fallback ? row(p.fallback) : null;
-  const miss = missText(d.checks);
-  const status = d.passes ? `<span class="vstatus ok"><i>✓</i> Meets all your targets</span>`
-    : `<span class="vstatus warn"><i>⚠</i> Closest option · misses ${esc(andList(miss))}</span>`;
+  if (!d) { el.innerHTML = ""; return; }
   const acc = chk(d, "accuracy"), hal = chk(d, "halluc"), lat = chk(d, "latency"), bud = chk(d, "cost");
-  const model$ = d.harness ? d.monthly - d.harness.monthly : d.monthly;
-  const kpis = [
-    `<div class="kpi"><div class="kpi-k" data-tip="Model calls plus production controls at your volume. Fixed infrastructure is listed separately.">Cost per month</div>
-      <div class="kpi-v">${fmt$(d.monthly)}</div>
-      <div class="kpi-s">${d.harness ? `${fmt$(model$)} model calls + ${fmt$(d.harness.monthly)} controls` : `${SPEC.requests_per_day.toLocaleString()} requests a day`}${d.infra_monthly ? `<br>+ ${fmt$(d.infra_monthly)} fixed infrastructure` : ""}</div>
-      ${bud ? targetRow(bud, `Budget ${fmt$(bud.target)}`) : `<div class="kpi-t muted">${SPEC.requests_per_day.toLocaleString()} requests a day</div>`}</div>`,
-    `<div class="kpi"><div class="kpi-k" data-tip="Share of test cases answered correctly. The range is where the true rate likely sits (95% confidence).">Accuracy</div>
-      <div class="kpi-v">${pct(d.accuracy)}</div>
-      <div class="kpi-s">${d.right} of ${d.n} test cases · likely ${range(d)}</div>
-      ${targetRow(acc, acc ? `Target ${pct(acc.target)} or more${acc.relaxed_from ? ` (cost first; you set ${pct(acc.relaxed_from)})` : ""}` : "")}</div>`,
-    `<div class="kpi"><div class="kpi-k" data-tip="Answers that stated something the source doesn't support. Never traded away for cost.">Made-up answers</div>
-      <div class="kpi-v">${pct(d.halluc)}</div>
-      <div class="kpi-s">${Math.round((d.halluc || 0) * d.n)} of ${d.n} answers</div>
-      ${targetRow(hal, hal ? `Limit ${pct(hal.target)} or less` : "")}</div>`,
-    `<div class="kpi"><div class="kpi-k" data-tip="Time until the answer is ready, including production controls. 95% of requests finish within the big number.">Response time</div>
-      <div class="kpi-v">${dur(d.p95_ms)}</div>
-      <div class="kpi-s">for 95% of requests · 90% within ${dur(d.p90_ms)} · median ${dur(d.p50_ms)}</div>
-      ${targetRow(lat, lat ? `Target ${dur(lat.target)} or less` : "")}</div>`,
-  ];
+  const ctl = d.harness ? d.harness.monthly : 0, mdl = d.monthly - ctl, infra = d.infra_monthly || 0, total = d.monthly;
+  const seg = (v, cls, label) => v > 0 ? `<span class="c-seg ${cls}" style="width:${(100 * v / total).toFixed(2)}%" data-tip="${esc(label)}: ${fmt$(v)}/month"></span>` : "";
+  const costCard = `<div class="gauge"><div class="g-k" data-tip="Model calls plus production controls at ${SPEC.requests_per_day.toLocaleString()} requests a day. Fixed infrastructure is listed separately.">Cost per month</div>
+    <div class="g-v">${fmt$(total)}</div>
+    <div class="cbar">${seg(mdl, "c1", "Model calls")}${seg(ctl, "c2", "Production controls")}</div>
+    <div class="c-leg"><span><i class="c1"></i>Model ${fmt$(mdl)}</span>${ctl ? `<span><i class="c2"></i>Controls ${fmt$(ctl)}</span>` : ""}${infra ? `<span>+ ${fmt$(infra)} fixed infra</span>` : ""}</div>
+    ${bud ? `<div class="g-t">${bud.pass ? `<span class="st ok"><i>✓</i>Budget ${fmt$(bud.target)}</span>` : `<span class="st bad"><i>✗</i>Budget ${fmt$(bud.target)}</span>`}</div>` : `<div class="g-t"><span class="hint">${(SPEC.requests_per_day / 1000).toLocaleString()}k requests/day</span></div>`}</div>`;
+  const hmax = Math.max(0.15, (hal ? hal.target : 0.05) * 3, (d.halluc || 0) * 1.25);
+  const lmax = Math.max((lat ? lat.target : 0) * 1.15, d.p95_ms * 1.15);
   el.className = "verdict " + (d.passes ? "v-ok" : "v-warn");
   el.innerHTML = `
-    <div class="v-top">${status}<span class="v-ev" data-tip="${esc(st[2])}">Evidence: <b>${st[0]}</b> · ${d.n} test cases${g.judge ? ` · ${g.judge} checked by a judge model` : ""} · ${ADV.live_count ? `${ADV.live_count} of ${ADV.evaluated_models.length} models measured live` : "simulated"}</span></div>
-    <h2 class="v-head">Build <span class="v-arch">${esc(d.name)}</span> on <span class="v-model">${esc(modelName(p.primary))}</span></h2>
-    <p class="v-sub">How the recommended design scores against your targets at ${SPEC.requests_per_day.toLocaleString()} requests a day${r.mode && r.mode !== "live" ? ` <span class="tag warn">recommended model simulated</span>` : ""}.</p>
-    <div class="kpis">${kpis.join("")}</div>`;
+    <div class="v-top"><h2 class="v-head2">Winner vs your targets</h2><span class="v-ev">${esc(d.name)} on ${esc(mlabel(p.primary))} · ${SPEC.requests_per_day.toLocaleString()} requests/day</span></div>
+    <div class="gauges">
+      ${costCard}
+      ${gauge("Accuracy", `${d.right} of ${d.n} test cases correct. Shaded: the likely range (95% confidence).`, pct(d.accuracy),
+        meter({ value: d.accuracy || 0, max: 1, target: acc && acc.target, lo: d.acc_lo, hi: d.acc_hi }), acc, acc ? `Target ≥ ${pct(acc.target)}` : "")}
+      ${gauge("Made-up answers", `${Math.round((d.halluc || 0) * d.n)} of ${d.n} answers stated something the source doesn't support.`, pct(d.halluc),
+        meter({ value: d.halluc || 0, max: hmax, target: hal && hal.target }), hal, hal ? `Limit ≤ ${pct(hal.target)}` : "")}
+      ${gauge("Response time (95%)", "95 of 100 requests finish within this time. Ticks: median and 90%.", dur(d.p95_ms),
+        meter({ value: d.p95_ms, max: lmax, target: lat && lat.target, ticks: [{ v: d.p50_ms, short: "50%", label: `Median ${dur(d.p50_ms)}` }, { v: d.p90_ms, short: "90%", label: `90% within ${dur(d.p90_ms)}` }] }), lat, lat ? `Target ≤ ${dur(lat.target)}` : "")}
+    </div>
+    <div class="g-legend"><span><i class="lg-fill"></i>measured</span><span><i class="lg-range"></i>likely range</span><span><i class="lg-target"></i>your target</span></div>`;
 }
 
 function optRow(o) {
   const t = o.m, ok = o.meets;
   return `<tr class="${o.cls || ""}">
-    <td data-l="Option"><div class="o-tag ${o.cls || ""}">${o.tag}</div><div class="o-note">${o.note || ""}</div></td>
+    <td data-l="Option"><div class="o-tag ${o.cls || ""}"${o.note ? ` data-tip="${esc(o.note.replace(/<[^>]+>/g, ""))}"` : ""}>${o.tag}${o.note ? ' <span class="o-i">ⓘ</span>' : ""}</div></td>
     <td data-l="Design"><div class="o-arch">${esc(o.arch)}</div><div class="o-model">${o.model}</div></td>
     <td data-l="Per month" class="num"><b>${fmt$(t.monthly)}</b></td>
     <td data-l="Accuracy" class="num">${pct(t.accuracy)}</td>
@@ -709,7 +717,7 @@ function renderOptions() {
     rows.push({ tag: `Alternative ${i + 1}`, arch: x.name, model: rolesText(x) || mdl(x.models.primary), m: x, meets: x.passes, miss: missText(x.checks), mode: xr.mode,
       note: `Choose it if ${esc(x.pick_if)}` });
   });
-  $("#optHint").innerHTML = `The recommendation, its fallback${c && c.id !== p.fallback ? ", the cheapest alternative" : ""}${ADV.top.length > 1 ? ` and the other ${ADV.top.length - 1 === 1 ? "architecture" : "architectures"} that fit` : ""}. Same test cases, same volume (${SPEC.requests_per_day.toLocaleString()} requests a day), production controls ${SPEC.harness ? "included" : "not included"}.`;
+  $("#optHint").innerHTML = `Same ${d.n} test cases · ${SPEC.requests_per_day.toLocaleString()} requests/day · controls ${SPEC.harness ? "included" : "not included"} · hover ⓘ for when to pick each`;
   $("#options").innerHTML = `<div class="tablewrap"><table class="otable"><thead><tr><th>Option</th><th>Design</th><th class="num">Per month</th><th class="num">Accuracy</th><th class="num">Made up</th><th class="num">95% within</th><th>Your targets</th><th>Measured</th></tr></thead>
     <tbody>${rows.map(optRow).join("")}</tbody></table></div>`;
 }
@@ -740,36 +748,40 @@ function whyModelOnly() {
 
 function renderPicks() {
   const d = ADV.top[0], p = ADV.models, el = $("#picks");
-  if (!d) { el.innerHTML = ""; return; }
-  const r = row(p.primary) || {}, fr = p.fallback ? row(p.fallback) : null, i = info(p.primary), fi = p.fallback ? info(p.fallback) : {};
-  const meas = (x) => x && x.mode === "live" ? `<span class="st ok"><i>●</i>Measured live</span>` : `<span class="st unsure"><i>◌</i>Simulated</span>`;
-  const price = (m) => m.in != null ? `$${m.in} / $${m.out} per 1M tokens` : "";
-  const nFit = ADV.top.length, nAll = nFit + Object.keys(ADV.not_applicable || {}).length;
+  if (!d) { el.innerHTML = `<div class="v-empty">No architecture fits this goal with the models allowed for its data. See Details → More.</div>`; return; }
+  const st = strength(), r = row(p.primary) || {}, fr = p.fallback ? row(p.fallback) : null, fd = p.fallback_design || {};
+  const i = info(p.primary), fi = p.fallback ? info(p.fallback) : {};
+  const badge = (x) => x && x.mode === "live" ? `<span class="pb ok" data-tip="Measured with real calls on your test cases">● Live</span>` : `<span class="pb warn" data-tip="No access to this platform from this server: numbers come from a built-in profile">◌ Simulated</span>`;
+  const meets = (x) => x && x.meets ? `<span class="pb ok">✓ Meets targets</span>` : `<span class="pb bad" data-tip="Misses ${esc(andList(missText((x && x.checks) || [])))}">✗ Misses ${esc(missText((x && x.checks) || []).length)} target${missText((x && x.checks) || []).length === 1 ? "" : "s"}</span>`;
+  const nums = (xs) => `<div class="pn">${xs.map(([v, k, cls]) => `<div class="pn-i ${cls || ""}"><div class="pn-v">${v}</div><div class="pn-k">${k}</div></div>`).join("")}</div>`;
+  const status = d.passes ? `<span class="vstatus ok"><i>✓</i> Meets all your targets</span>` : `<span class="vstatus warn"><i>⚠</i> Closest option · misses ${esc(andList(missText(d.checks)))}</span>`;
+  const g = ADV.grading || {};
   el.innerHTML = `
-    <section class="pick models" aria-label="Models">
-      <div class="pick-half">
-        <div class="pick-k"><span class="pk-dot win"></span>Winner model</div>
+    <div class="dec-head"><div class="dec-title">Recommendation</div>${status}
+      <span class="dec-ev" data-tip="${esc(st[2])}">Evidence <b>${st[0]}</b> · ${d.n} test cases · ${ADV.live_count || 0}/${ADV.evaluated_models.length} models live${g.judge ? ` · ${g.judge} judge-checked` : ""}</span></div>
+    <div class="dec-grid">
+      <article class="pick win">
+        <div class="pick-k">🏆 Winner model</div>
         <div class="pick-name">${esc(i.label || p.primary)}</div>
-        <div class="pick-meta">${esc(i.maker || "")} · ${esc(i.platform || "")}</div>
-        <div class="pick-meta">${price(i)}</div>
-        <div class="pick-foot">${meas(r)}${r.meets ? `<span class="st ok"><i>✓</i>Meets targets</span>` : `<span class="st bad"><i>✗</i>Misses ${esc(andList(missText(r.checks || [])))}</span>`}</div>
-      </div>
-      <div class="pick-half">
-        <div class="pick-k"><span class="pk-dot fb"></span>Fallback model</div>
+        <div class="pick-meta">${esc(i.platform || "")} · $${i.in} / $${i.out} per 1M tokens</div>
+        ${nums([[fmt$(d.monthly), "per month"], [pct(d.accuracy), "accuracy"], [dur(d.p95_ms), "95% within"]])}
+        <div class="pick-foot">${badge(r)}${meets(r)}</div>
+      </article>
+      <article class="pick fb">
+        <div class="pick-k">↺ Fallback model</div>
         ${fr ? `<div class="pick-name">${esc(fi.label || p.fallback)}</div>
-        <div class="pick-meta">${esc(fi.maker || "")} · ${esc(fi.platform || "")}</div>
-        <div class="pick-meta">Takes over if the winner is down; another platform, so one outage can't stop both.</div>
-        <div class="pick-foot">${meas(fr)}${fr.meets ? `<span class="st ok"><i>✓</i>Meets targets</span>` : `<span class="st bad"><i>✗</i>Misses ${esc(andList(missText(fr.checks)))}</span>`}</div>`
-        : `<div class="pick-meta">No model on another platform was tested. Compare all models to find one.</div>`}
-      </div>
-    </section>
-    <section class="pick arch" aria-label="Suggested architecture">
-      <div class="pick-k"><span class="pk-dot arch"></span>Suggested architecture</div>
-      <div class="pick-name">${esc(d.name)}</div>
-      <div class="pick-meta">${esc(d.what)}</div>
-      <div class="mini-flow">${flowSteps(d).map((x) => `<span class="mf ${x.kind}">${esc(x.name)}</span>`).join('<span class="mf-arrow">→</span>')}</div>
-      <div class="pick-foot"><span class="hint">Best of ${nFit} pattern${nFit > 1 ? "s" : ""} that fit (${nAll} considered) · build ${d.build_weeks[0]}–${d.build_weeks[1]} engineer-weeks</span></div>
-    </section>`;
+        <div class="pick-meta" data-tip="Takes over if the winner is down. On another platform, so one outage can't stop both.">${esc(fi.platform || "")} · if the winner is down</div>
+        ${nums([[fmt$(fd.monthly), "per month"], [pct(fd.accuracy), "accuracy"], [dur(fd.p95_ms), "95% within"]])}
+        <div class="pick-foot">${badge(fr)}${meets(fr)}</div>` : `<div class="pick-meta">None on another platform was tested.</div>`}
+      </article>
+      <article class="pick arch">
+        <div class="pick-k">◆ Suggested architecture</div>
+        <div class="pick-name" data-tip="${esc(d.what)}">${esc(d.name)}</div>
+        <div class="mini-flow">${flowSteps(d).filter((x) => x.kind !== "ctl").map((x) => `<span class="mf ${x.kind}">${esc(x.name)}</span>`).join('<span class="mf-arrow">→</span>')}</div>
+        ${nums([[`${d.build_weeks[0]}–${d.build_weeks[1]} wks`, "to build"], [d.harness ? String(d.harness.controls.length) : "0", "controls"], [d.infra_monthly ? fmt$(d.infra_monthly) : "$0", "infra / mo"]])}
+        <div class="pick-foot"><span class="pb">#1 of ${ADV.top.length} that fit</span><span class="pb">${Object.keys(ADV.not_applicable || {}).length + ADV.top.length} patterns checked</span></div>
+      </article>
+    </div>`;
 }
 
 // One step of the request path: its name, a short line on what it does, and what kind of step it is.
@@ -804,7 +816,7 @@ function renderHow() {
   const d = ADV.top[0], p = ADV.models;
   if (!d) { $("#howCard").classList.add("hidden"); return; }
   $("#howCard").classList.remove("hidden");
-  $("#howHint").textContent = `${d.name}: ${d.what}`;
+  $("#howHint").textContent = `${d.name} · ${flowSteps(d).length} steps per request${d.harness ? ` · ${d.harness.controls.length} production controls` : ""}`;
   // Only reasons not already shown as numbers: the pattern's rationale and the goal facts that chose it.
   const skip = /^(About \$|Includes a production harness|No design met|Meets all|\d+ of \d+ test cases correct|Why not the cheaper|You put |Plus about|Prompt caching covers)|(the most accurate model tested|the cheapest model that meets|meets every requirement in this architecture)/;
   const why = d.why.filter((w) => !skip.test(w)).map(esc)
@@ -825,10 +837,10 @@ function renderHow() {
     <div class="flow-legend"><span><i class="lg llm"></i>model call</span><span><i class="lg sys"></i>your system</span>${d.harness ? `<span><i class="lg ctl"></i>production control</span>` : ""}</div>
     <div class="astats">${stats.map(([k, v, s2]) => `<div class="astat"><div class="astat-k">${k}</div><div class="astat-v">${v}</div><div class="astat-s">${esc(s2)}</div></div>`).join("")}</div>
     <div class="how-grid">
-      <div class="panel"><h3 class="h3">Why this design</h3><ul class="why-list">${why.map((w) => `<li>${w}</li>`).join("")}</ul>
+      <div class="panel"><h3 class="h3">Why this design</h3><ul class="why-list">${why.slice(0, 2).map((w) => `<li>${w}</li>`).join("")}</ul>
         <p class="hint" style="margin:10px 0 0"><span class="ev ${EV[d.evidence][1]}" data-tip="${esc(EV[d.evidence][2])}">${EV[d.evidence][0]}</span>${d.sources && d.sources.length ? ` · guidance: ${srcLinks(d.sources)}` : ""}</p></div>
-      <div class="panel"><h3 class="h3">How to build it</h3><ol class="build-list">${build.map((b) => `<li>${esc(b)}</li>`).join("")}${d.addons.map((a) => `<li>Add <b>${esc(a.name)}</b>: ${esc(a.why)}.</li>`).join("")}${p.fallback ? `<li>Configure <b>${esc(modelName(p.fallback))}</b> as the fallback in the AI Gateway.</li>` : ""}</ol>
-        ${d.components ? `<p class="hint" style="margin:8px 0 0">Components: ${d.components.map(esc).join(" · ")}</p>` : ""}</div>
+      <details class="panel buildbox"><summary class="h3">How to build it · ${build.length + d.addons.length + (p.fallback ? 1 : 0)} steps</summary><ol class="build-list">${build.map((b) => `<li>${esc(b)}</li>`).join("")}${d.addons.map((a) => `<li>Add <b>${esc(a.name)}</b>: ${esc(a.why)}.</li>`).join("")}${p.fallback ? `<li>Configure <b>${esc(modelName(p.fallback))}</b> as the fallback in the AI Gateway.</li>` : ""}</ol>
+        ${d.components ? `<p class="hint" style="margin:8px 0 0">Components: ${d.components.map(esc).join(" · ")}</p>` : ""}</details>
     </div>`;
 }
 
